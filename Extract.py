@@ -48,7 +48,7 @@ for fname in os.listdir(directory):
             except KeyError:
                 continue
 
-    save_loc = os.path.join("../Extracted", fname)
+    save_loc = f"../Extracted/{str(int(fname[5:7]))}/fname"
 
     with gzip.open(save_loc, 'wt', encoding='utf-8') as out:
         json.dump(tweets, out, ensure_ascii=False)
