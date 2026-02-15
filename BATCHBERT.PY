@@ -3,6 +3,7 @@ import torch, gzip, json, os
 from torch.nn.functional import softmax
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import langid
 
 # Select GPU
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -42,10 +43,14 @@ def score_batch(tweets):
         score = (positive - negative + 1)/2
         return score.cpu().numpy()
 
+# -- Main --
 
 base = "../Extracted/"
-output = "../Processed"
+output = "../Sentiment-Scored"
 os.makedirs(output, exist_ok=True)
+
+en_count = 0
+non_en_count = 0
 
 for month in sorted(os.listdir(base)):
     month_path = os.path.join(base, month)
@@ -60,8 +65,6 @@ for month in sorted(os.listdir(base)):
         day_name = fname.replace(".world.json.gz", ".csv")
         output_file = os.path.join(output, day_name)
 
-        print(f"Processing {input_file}")
-
         batch_tweets = []
         batch_coords = []
 
@@ -69,33 +72,45 @@ for month in sorted(os.listdir(base)):
             out_csv.write("tweet,sentiment_score,coordinates\n")
 
         with gzip.open(input_file, "rt", encoding="utf-8") as f:
-            for line in tqdm(f, desc=f"Processing {fname}", leave=False):
-                data = json.loads(line[0])
+            tweets = json.load(f)   # loads entire array safely
+
+        for data in tqdm(tweets, desc=f"Processing {fname}", leave=False):
                 tweet = data.get("text", "")
                 coords = data.get("coordinates")
 
+                lang, conf = langid.classify(tweet)
+                if lang != "en":
+                    non_en_count += 1
+                    continue
+
+                en_count += 1
                 batch_tweets.append(tweet)
                 batch_coords.append(coords)
 
-                if len(batch_texts) >= BATCH_SIZE:
-                    scores = score_batch(batch_texts)
+                if len(batch_tweets) >= BATCH_SIZE:
+                    scores = score_batch(batch_tweets)
                     with open(output_file, "a", encoding="utf-8") as out_csv:
-                        for t, s, c in zip(batch_texts, scores, batch_coords):
+                        for t, s, c in zip(batch_tweets, scores, batch_coords):
                             tweet_clean = t.replace('"', '""')
                             if c is None:
                                 coord_str = ""
                             else:
                                 coord_str = f"{c[0]},{c[1]}"  # lon,lat
                             out_csv.write(f'"{tweet_clean}",{s},{coord_str}\n')
-                    batch_texts, batch_coords = [], []
+                    batch_tweets, batch_coords = [], []
 
-        if batch_texts:
-            scores = score_batch(batch_texts)
+        if batch_tweets:
+            scores = score_batch(batch_tweets)
             with open(output_file, "a", encoding="utf-8") as out_csv:
-                for t, s, c in zip(batch_texts, scores, batch_coords):
+                for t, s, c in zip(batch_tweets, scores, batch_coords):
                     tweet_clean = t.replace('"', '""')
                     if c is None:
                         coord_str = ""
                     else:
                         coord_str = f"{c[0]},{c[1]}"
                     out_csv.write(f'"{tweet_clean}",{s},{coord_str}\n')
+
+
+print(f"Total Tweets   : {en_count+non_en_count:,}")
+print(f"English Tweets : {en_count:,}")
+print(f"Non-English Tweets : {non_en_count:,}")
