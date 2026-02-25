@@ -3,7 +3,6 @@ import torch, gzip, json, os
 from torch.nn.functional import softmax
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import langid
 
 # Select GPU
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -49,9 +48,6 @@ base = "../Extracted/"
 output = "../Sentiment-Scored"
 os.makedirs(output, exist_ok=True)
 
-en_count = 0
-non_en_count = 0
-
 for month in sorted(os.listdir(base)):
     month_path = os.path.join(base, month)
     if not os.path.isdir(month_path):
@@ -78,12 +74,6 @@ for month in sorted(os.listdir(base)):
                 tweet = data.get("text", "")
                 coords = data.get("coordinates")
 
-                lang, conf = langid.classify(tweet)
-                if lang != "en":
-                    non_en_count += 1
-                    continue
-
-                en_count += 1
                 batch_tweets.append(tweet)
                 batch_coords.append(coords)
 
@@ -109,8 +99,3 @@ for month in sorted(os.listdir(base)):
                     else:
                         coord_str = f"{c[0]},{c[1]}"
                     out_csv.write(f'"{tweet_clean}",{s},{coord_str}\n')
-
-
-print(f"Total Tweets   : {en_count+non_en_count:,}")
-print(f"English Tweets : {en_count:,}")
-print(f"Non-English Tweets : {non_en_count:,}")
