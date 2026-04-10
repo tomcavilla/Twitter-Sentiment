@@ -2,10 +2,13 @@
 import argparse
 import geopandas as gpd
 import json
+import matplotlib as mpl
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import seaborn as sns
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from matplotlib.colors import LinearSegmentedColormap
 from pathlib import Path
 
@@ -432,36 +435,48 @@ if __name__ == "__main__":
     tweet_folder = Path(__file__).parent.parent / "CityTweets" / args.city
 
     if tweet_folder.exists():
-        rows = []
-        for file_path in tweet_folder.glob("*.jsonl"):
-            with file_path.open("r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        tweet = json.loads(line)
-                        centroid = tweet.get("centroid")
-                        if centroid is None:
+        pickle_path = Path(__file__).parent.parent / "Pickles" / f"{args.city}_tweets.pkl"
+        pickle_path.parent.mkdir(exist_ok=True)
+
+        if pickle_path.exists():
+            tweets_df = pd.read_pickle(pickle_path)
+        else:
+            def parse_file(fp):
+                rows = []
+                with fp.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            tweet = json.loads(line)
+                            centroid = tweet.get("centroid")
+                            if centroid is None:
+                                continue
+                            lat, lon = centroid
+                            rows.append((lon, lat, tweet.get("timestamp"), tweet.get("sentiment_score")))
+                        except json.JSONDecodeError:
                             continue
-                        lat, lon = centroid
-                        rows.append({
-                            "lon": lon,
-                            "lat": lat,
-                            "timestamp": tweet.get("timestamp"),
-                        })
-                    except json.JSONDecodeError:
-                        continue
+                return rows
 
-        tweets_df = pd.DataFrame(rows)
-        tweets_df["timestamp"] = pd.to_datetime(tweets_df["timestamp"], errors="coerce")
+            all_rows = []
+            with ThreadPoolExecutor() as executor:
+                futures = {executor.submit(parse_file, f): f for f in tweet_folder.glob("*.jsonl")}
+                for future in as_completed(futures):
+                    all_rows.extend(future.result())
 
+            tweets_df = pd.DataFrame(all_rows, columns=["lon", "lat", "timestamp", "sentiment"])
+            tweets_df["timestamp"] = pd.to_datetime(tweets_df["timestamp"], errors="coerce")
+            tweets_df.to_pickle(pickle_path)
+
+        # Single spatial join — used for all tweet-based figures
         tweets_gdf = gpd.GeoDataFrame(
             tweets_df,
             geometry=gpd.points_from_xy(tweets_df["lon"], tweets_df["lat"]),
             crs="EPSG:4326"
         )
-
         joined = gpd.sjoin(tweets_gdf, city_gdf[["GEOID", "geometry"]], predicate="within")
-        counts = joined.groupby("index_right").size()
 
+        # - Tweet Count Choropleth -
+
+        counts = joined.groupby("index_right").size()
         tweet_count_gdf = city_gdf.copy()
         tweet_count_gdf["tweet_count"] = 0
         tweet_count_gdf.loc[counts.index, "tweet_count"] = counts.values
@@ -494,24 +509,20 @@ if __name__ == "__main__":
         scatter_df = scatter_df[scatter_df["tweet_count"] > 0]
 
         scatter_vars = [
-            ("INCOME_SCORE",  "Weighted Income Score ($k)", "Tweet Count vs Income"),
-            ("PED3_13_17",    "Proportion with Bachelor's+", "Tweet Count vs Education"),
-            ("POPDEN13_17",   "Persons per sq. mile", "Tweet Count vs Population Density"),
-            ("PUNEMP13_17",   "Proportion unemployed", "Tweet Count vs Unemployment"),
+            ("INCOME_SCORE", "Weighted Income Score ($k)", "Tweet Count vs Income"),
+            ("PED3_13_17",   "Proportion with Bachelor's+", "Tweet Count vs Education"),
+            ("POPDEN13_17",  "Persons per sq. mile",        "Tweet Count vs Population Density"),
+            ("PUNEMP13_17",  "Proportion unemployed",       "Tweet Count vs Unemployment"),
         ]
 
         fig, axes = plt.subplots(2, 2, figsize=(14, 11))
-
         for ax, (col, xlabel, title) in zip(axes.flatten(), scatter_vars):
             x = scatter_df[col]
             y = scatter_df["tweet_count"]
-
             ax.scatter(x, y, alpha=0.35, s=10, color="#06402B")
-
             m, b = np.polyfit(x, y, 1)
             x_line = np.linspace(x.min(), x.max(), 200)
             ax.plot(x_line, m * x_line + b, color="crimson", linewidth=1.5)
-
             ax.set_xlabel(xlabel)
             ax.set_ylabel("Tweet count")
             ax.set_title(title)
@@ -523,45 +534,131 @@ if __name__ == "__main__":
 
         # - Temporal Breakdowns -
 
-        ts = tweets_df["timestamp"].dropna()
-
-        # Hour of day
-        hour_counts = ts.dt.hour.value_counts().sort_index()
-
-        fig, ax = plt.subplots(figsize=(12, 5))
-        ax.bar(hour_counts.index, hour_counts.values, color="#06402B")
-        ax.set_xlabel("Hour of Day")
-        ax.set_ylabel("Tweet Count")
-        ax.set_xticks(range(24))
-        ax.set_title(f"Tweet Frequency by Hour of Day — {args.city}")
-        plt.tight_layout()
-        plt.savefig(figures_dir / f"{args.city}-Tweet_Hour.png", dpi=300, bbox_inches="tight")
-        plt.close()
-
-        # Day of week
-        day_counts = ts.dt.dayofweek.value_counts().sort_index()
-        day_labels = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.bar(day_labels, [day_counts.get(i, 0) for i in range(7)], color="#06402B")
-        ax.set_xlabel("Day of Week")
-        ax.set_ylabel("Tweet Count")
-        ax.set_title(f"Tweet Frequency by Day of Week — {args.city}")
-        plt.tight_layout()
-        plt.savefig(figures_dir / f"{args.city}-Tweet_Day.png", dpi=300, bbox_inches="tight")
-        plt.close()
-
-        # Month
-        month_counts = ts.dt.month.value_counts().sort_index()
+        ts = joined["timestamp"].dropna()
         month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        day_labels = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-        fig, ax = plt.subplots(figsize=(12, 5))
-        ax.bar(month_labels, [month_counts.get(i, 0) for i in range(1, 13)], color="#06402B")
-        ax.set_xlabel("Month")
-        ax.set_ylabel("Tweet Count")
-        ax.set_title(f"Tweet Frequency by Month — {args.city}")
+        temporal = [
+            (ts.dt.hour.value_counts().sort_index(),  range(24),    None,       "Hour of Day",  "Tweet Frequency by Hour of Day"),
+            (ts.dt.dayofweek.value_counts().sort_index(), range(7), day_labels, "Day of Week",  "Tweet Frequency by Day of Week"),
+            (ts.dt.month.value_counts().sort_index(), range(1, 13), month_labels, "Month",      "Tweet Frequency by Month"),
+        ]
+        out_names = ["Tweet_Hour", "Tweet_Day", "Tweet_Month"]
+        fig_widths = [12, 10, 12]
+
+        for (counts_s, idx, labels, xlabel, title), name, width in zip(temporal, out_names, fig_widths):
+            values = [counts_s.get(i, 0) for i in idx]
+            x_ticks = labels if labels else list(idx)
+            fig, ax = plt.subplots(figsize=(width, 5))
+            ax.bar(x_ticks, values, color="#06402B")
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Tweet Count")
+            ax.set_title(f"{title} — {args.city}")
+            plt.tight_layout()
+            plt.savefig(figures_dir / f"{args.city}-{name}.png", dpi=300, bbox_inches="tight")
+            plt.close()
+
+        # ---- Sentiment Analysis ----
+
+        # Aggregate daily sentiment per tract from the already-joined data
+        joined["date"] = joined["timestamp"].dt.date
+        tweet_data = (
+            joined.dropna(subset=["sentiment", "date"])
+            .groupby(["GEOID", "date"])
+            .agg(mean_sentiment=("sentiment", "mean"), tweet_count=("sentiment", "size"))
+            .reset_index()
+            .sort_values(["GEOID", "date"])
+        )
+        tweet_data["sentiment_change"] = tweet_data.groupby("GEOID")["mean_sentiment"].diff()
+
+        tract_sentiment = (
+            tweet_data.groupby("GEOID").agg(
+                mean_sentiment=("mean_sentiment", "mean"),
+                total_tweets=("tweet_count", "sum")
+            ).reset_index()
+        )
+        tract_sentiment["GEOID"] = tract_sentiment["GEOID"].astype(str).str.zfill(11)
+
+        # - Mean Sentiment Choropleth -
+
+        sentiment_map = city_gdf.merge(tract_sentiment, on="GEOID", how="left")
+
+        fig, ax = plt.subplots(figsize=(10, 12))
+        sentiment_map.plot(column="mean_sentiment", cmap="RdYlGn", legend=True, ax=ax,
+                           vmin=0, vmax=1,
+                           legend_kwds={"label": "Mean Sentiment Score", "shrink": 0.6})
+        city_bounds.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
+        ax.set_title(f"Mean Tweet Sentiment — {args.city}", fontsize=14)
+        ax.axis("off")
+        plt.savefig(figures_dir / f"{args.city}-Sentiment_Map.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # Merge with income — filter low-sample tracts
+        sentiment_income = (
+            tract_sentiment
+            .merge(gdf[["GEOID", "INCOME_SCORE"]], on="GEOID", how="inner")
+            .pipe(lambda d: d[d["total_tweets"] >= 10])
+            .dropna()
+        )
+
+        # - Sentiment vs Income Scatter -
+
+        z = np.polyfit(sentiment_income["INCOME_SCORE"], sentiment_income["mean_sentiment"], 1)
+        x_line = np.linspace(sentiment_income["INCOME_SCORE"].min(), sentiment_income["INCOME_SCORE"].max(), 200)
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        scatter = ax.scatter(
+            sentiment_income["INCOME_SCORE"], sentiment_income["mean_sentiment"],
+            s=50, alpha=0.5, c=sentiment_income["total_tweets"],
+            cmap="plasma", norm=mpl.colors.LogNorm(),
+            edgecolors="grey", linewidths=0.3
+        )
+        ax.plot(x_line, np.polyval(z, x_line), "k--", linewidth=1.2, label="Trend")
+        plt.colorbar(scatter, ax=ax, label="Tweet Count")
+        ax.set_xlabel("Estimated Mean Income ($k)")
+        ax.set_ylabel("Mean Sentiment Score")
+        ax.set_title(f"Tweet Sentiment vs Tract Income — {args.city}")
+        ax.legend()
         plt.tight_layout()
-        plt.savefig(figures_dir / f"{args.city}-Tweet_Month.png", dpi=300, bbox_inches="tight")
+        plt.savefig(figures_dir / f"{args.city}-Sentiment_vs_Income.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Residual Plot -
+
+        sentiment_income = sentiment_income.copy()
+        sentiment_income["residual"] = sentiment_income["mean_sentiment"] - np.polyval(z, sentiment_income["INCOME_SCORE"])
+        sentiment_income["log_tweets"] = np.log1p(sentiment_income["total_tweets"])
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        sc = ax.scatter(
+            sentiment_income["INCOME_SCORE"], sentiment_income["residual"],
+            c=sentiment_income["log_tweets"], cmap="viridis", alpha=0.7
+        )
+        ax.axhline(0, linestyle="--", linewidth=1)
+        plt.colorbar(sc, ax=ax, label="Log Tweet Count")
+        ax.set_xlabel("Income Score")
+        ax.set_ylabel("Residual Sentiment")
+        ax.set_title(f"Residual Sentiment vs Income — {args.city}")
+        plt.tight_layout()
+        plt.savefig(figures_dir / f"{args.city}-Sentiment_Residual.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Sentiment by Income Quintile Boxplot -
+
+        sentiment_income["income_bin"] = pd.qcut(
+            sentiment_income["INCOME_SCORE"], 5,
+            labels=["0–20th\npct", "20–40th\npct", "40–60th\npct", "60–80th\npct", "80–100th\npct"]
+        )
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        sns.boxplot(data=sentiment_income, x="income_bin", y="mean_sentiment", color="#595358", ax=ax)
+        sns.stripplot(data=sentiment_income, x="income_bin", y="mean_sentiment",
+                      color="black", alpha=0.3, size=2, ax=ax)
+        ax.set_xlabel("Income Group (Quintiles)")
+        ax.set_ylabel("Mean Sentiment")
+        ax.set_title(f"Sentiment Distribution Across Income Groups — {args.city}")
+        plt.tight_layout()
+        plt.savefig(figures_dir / f"{args.city}-Sentiment_Income_Boxplot.png", dpi=300, bbox_inches="tight")
         plt.close()
 
