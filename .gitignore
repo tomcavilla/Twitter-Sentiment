@@ -2,3 +2,5 @@
 *.html
 *.tsv
 _*
+__pycache__
+*.pyc
