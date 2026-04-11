@@ -27,6 +27,501 @@ def to_local(series, tz):
         return series.dt.tz_localize("UTC").dt.tz_convert(tz)
     return series.dt.tz_convert(tz)
 
+def generate_html(city, figures_dir, general_figures_dir, pages_dir):
+    pages_dir.mkdir(parents=True, exist_ok=True)
+
+    gen_rel  = Path("../Figures")
+    city_rel = Path(f"../Figures/{city}")
+
+    def card(filename, title, description, general=False):
+        full_path = (general_figures_dir if general else figures_dir) / filename
+        if full_path not in GENERATED_FIGURES:
+            return ""
+        src = (gen_rel if general else city_rel) / filename
+        return (
+            f'<div class="card">'
+            f'<img src="{src}" alt="{title}">'
+            f'<div class="caption"><h3>{title}</h3><p>{description}</p></div>'
+            f'</div>\n'
+        )
+
+    def section(anchor, title, intro, cards):
+        body = "".join(cards)
+        if not body.strip():
+            return ""
+        intro_html = f"<p class='intro'>{intro}</p>" if intro else ""
+        return (
+            f'<section id="{anchor}">'
+            f'<h2>{title}</h2>{intro_html}{body}'
+            f'</section>\n'
+        )
+
+    # ---- Section definitions ----
+
+    s_general = section("general", "General Tweet Statistics",
+        "Dataset-wide figures derived from all cities in the corpus. "
+        "Generated once and shared across all city reports.",
+        [
+            card("Tweet_Count_Top10.png", "Top 10 Cities by Tweet Count",
+                 "Horizontal bar chart ranking the ten most-tweeted cities in 2017. "
+                 "Longer bars indicate higher volume. Use this to understand where "
+                 f"{city} sits relative to the busiest cities in the dataset.",
+                 general=True),
+            card("Tweet_Count_Top5.png", "Top 5 Cities by Tweet Count",
+                 "The same ranking limited to the top five cities, giving a cleaner "
+                 "view of the leading cities without the longer tail.",
+                 general=True),
+            card("Tweet_Count_Months.png", "U.S. Tweet Volume by Month",
+                 "Bar chart showing how total tweet volume across all cities varies "
+                 "month by month across 2017. Taller bars indicate busier months. "
+                 "Look for seasonal peaks that may also be reflected in city-level data.",
+                 general=True),
+        ])
+
+    s_wealth = section("wealth", "Wealth Distribution",
+        "Income data is drawn from the ACS 2013–2017 five-year estimates. "
+        "The income score is a weighted average of income bracket proportions, "
+        "using bracket midpoints as weights.",
+        [
+            card(f"{city}-Wealth_Distribution.png", "Weighted Income Score",
+                 "Choropleth map where each census tract is shaded by its weighted "
+                 "income score (in $k). Green tracts are wealthier; red tracts are "
+                 "lower-income. The city boundary is overlaid as a reference. "
+                 "Look for spatial clustering — wealthy and deprived areas often "
+                 "form contiguous zones rather than mixing tract by tract."),
+        ])
+
+    s_age = section("age", "Age Distribution",
+        "Proportions are from ACS 2013–2017. Each value represents the share of "
+        "the tract population in that age band.",
+        [
+            card(f"{city}-Age_Distribution.png", "Age Group Proportions",
+                 "Five-panel choropleth grid, one panel per age group (18–29, 30–39, "
+                 "40–49, 50–69, 70+). All panels share a common colour scale so "
+                 "relative concentrations are directly comparable across age groups. "
+                 "Darker blue = higher concentration of that age group in the tract."),
+            card(f"{city}-Dominant_Age.png", "Dominant Age Group",
+                 "Each tract is coloured by whichever age group has the highest "
+                 "proportion. This simplifies the five-panel view into a single "
+                 "spatial picture of where each generation is concentrated. "
+                 "Note that 'dominant' does not mean 'majority' — the winning group "
+                 "may still be a minority if the population is spread evenly."),
+            card(f"{city}-Income_vs_Age.png", "Income vs Age Group Heatmap",
+                 "Rows are income brackets (ordered low to high); columns are age "
+                 "groups. Each cell shows the mean proportion of the tract population "
+                 "in that combination, averaged across all tracts sharing the same "
+                 "dominant income bracket. Brighter cells indicate a stronger "
+                 "co-occurrence. Look for diagonal or off-diagonal patterns that "
+                 "reveal which age groups tend to live in which income areas."),
+            card(f"{city}-Income_vs_Education.png", "Income vs Education Heatmap",
+                 "Rows are income brackets; columns are education levels. Each cell "
+                 "shows the mean proportion of adults at that education level, averaged "
+                 "across tracts with that dominant income bracket. Expect a strong "
+                 "positive association between high income and Bachelor's+ — the "
+                 "strength of this gradient varies significantly by city and can reveal "
+                 "how tightly income and education are spatially coupled locally."),
+        ])
+
+    s_density = section("density", "Population Density",
+        "Persons per square mile from ACS 2013–2017. Colour scale is clipped to "
+        "the 5th–95th percentile to prevent extreme outliers from washing out variation.",
+        [
+            card(f"{city}-Population_Density.png", "Population Density",
+                 "Choropleth using a plasma colour scale (dark purple = sparse, "
+                 "bright yellow = dense). High-density tracts are typically urban "
+                 "cores, transit corridors, or areas with large apartment buildings. "
+                 "Compare this map to tweet counts — density and tweet volume do "
+                 "not always correlate once population is controlled for."),
+        ])
+
+    s_edu = section("education", "Education Levels",
+        "Proportions of the adult population by highest educational attainment, "
+        "from ACS 2013–2017.",
+        [
+            card(f"{city}-Education_Levels.png", "Education Level Proportions",
+                 "Three-panel choropleth: proportion with less than a high school "
+                 "diploma, proportion with a high school diploma or some college, "
+                 "and proportion with a Bachelor's degree or higher. Panels share "
+                 "a colour scale. Areas with high Bachelor's+ rates tend to overlap "
+                 "strongly with high-income and high-affluence areas."),
+            card(f"{city}-Dominant_Education.png", "Dominant Education Level",
+                 "Each tract coloured by its most prevalent education level. "
+                 "In most cities the high school / some college group dominates "
+                 "broadly, with Bachelor's+ concentrating in specific neighbourhoods. "
+                 "Tracts dominated by the < high school group often align with "
+                 "high-disadvantage areas."),
+        ])
+
+    s_labour = section("labour", "Labour Market",
+        "Unemployment is measured as the proportion of the civilian labour force "
+        "aged 16+ that is unemployed, from ACS 2013–2017.",
+        [
+            card(f"{city}-Unemployment.png", "Unemployment Rate",
+                 "Red choropleth where darker shading indicates higher unemployment. "
+                 "Scale is clipped to the 5th–95th percentile. Unemployment tends "
+                 "to cluster spatially and correlates strongly with the neighbourhood "
+                 "disadvantage index. Compare to the disadvantage map to see which "
+                 "component is driving it most in this city."),
+        ])
+
+    s_housing = section("housing", "Housing",
+        "Owner-occupancy from ACS 2013–2017, expressed as a proportion of all "
+        "occupied housing units.",
+        [
+            card(f"{city}-Owner_Occupied_Housing.png", "Owner-Occupied Housing",
+                 "Green choropleth showing the share of housing units that are "
+                 "owner-occupied. Higher values (darker green) indicate more "
+                 "homeownership. Dense urban cores typically show low owner-occupancy "
+                 "due to rental stock; suburban and peripheral tracts tend to be "
+                 "higher. This is one component of neighbourhood stability."),
+        ])
+
+    s_indices = section("indices", "Neighbourhood Indices",
+        "Both indices are scored 0–1 and derived from principal factor analysis "
+        "of ACS indicators (see NaNDA documentation). They are theoretically "
+        "distinct — high affluence is not simply the absence of disadvantage.",
+        [
+            card(f"{city}-Affluence_Disadvantage.png", "Affluence & Disadvantage Scores",
+                 "Side-by-side choropleths. Left: neighbourhood affluence (average "
+                 "of % income >$75k, % Bachelor's+, % professional occupations) — "
+                 "darker purple = more affluent. Right: neighbourhood disadvantage "
+                 "(average of % non-Hispanic Black, % female-headed families, "
+                 "% public assistance, % below poverty, % unemployed) — darker "
+                 "brown = more disadvantaged. The two maps will not be mirror images "
+                 "of each other — some tracts are neither notably affluent nor "
+                 "notably disadvantaged."),
+        ])
+
+    s_ethnicity = section("ethnicity", "Race & Ethnicity",
+        "Proportions from ACS 2013–2017. Each panel uses an independent colour "
+        "scale so that variation within each group is visible regardless of the "
+        "group's overall prevalence in the city.",
+        [
+            card(f"{city}-Race_Ethnicity.png", "Race & Ethnicity Proportions",
+                 "2×2 choropleth grid: Non-Hispanic White, Non-Hispanic Black, "
+                 "Hispanic, and Born Outside the U.S. Each panel is independently "
+                 "scaled, so darker orange means a higher concentration of that "
+                 "group within that panel's own range — do not compare shading "
+                 "intensity directly across panels."),
+            card(f"{city}-Dominant_Ethnicity.png", "Dominant Race/Ethnicity Group",
+                 "Each tract coloured by its most prevalent group. As with other "
+                 "dominant-group maps, the winning group may not constitute a "
+                 "majority. Look for spatial segregation patterns — how sharply "
+                 "do the boundaries between groups align with physical features "
+                 "like roads, railways, or watercourses?"),
+            card(f"{city}-Ethnicity_vs_Income.png", "Ethnicity vs Income Heatmap",
+                 "Rows are dominant ethnicity groups; columns are income brackets. "
+                 "Each cell shows the mean proportion of families in that income "
+                 "bracket, averaged across tracts with that dominant ethnicity. "
+                 "Brighter cells = stronger association. Annotated values allow "
+                 "precise reading. This reveals income distribution differences "
+                 "across ethnicity groups at the tract level."),
+            card(f"{city}-Ethnicity_vs_Education.png", "Ethnicity vs Education Heatmap",
+                 "Same structure as the income heatmap but with education levels "
+                 "as columns. Reveals how educational attainment is distributed "
+                 "across ethnicity groups. Compare the two heatmaps together — "
+                 "groups with higher education concentrations in the >$75k bracket "
+                 "will typically also show higher Bachelor's+ proportions."),
+        ])
+
+    s_tweets = section("tweets", "Tweet Statistics",
+        "All temporal figures use timestamps converted to the city's local timezone. "
+        "Tweet counts represent geolocated tweets falling within census tract boundaries.",
+        [
+            card(f"{city}-Tweet_Count.png", "Tweet Count per Census Tract",
+                 "Viridis choropleth where brighter tracts generated more tweets. "
+                 "Scale is clipped to the 5th–95th percentile. High-count tracts "
+                 "are typically commercial, entertainment, or transit-heavy areas "
+                 "rather than residential ones. Sparse tracts (parks, industrial "
+                 "zones) often show near-zero counts."),
+            card(f"{city}-Tweet_Hour.png", "Tweet Volume by Hour of Day",
+                 "Bar chart of tweet frequency across the 24-hour clock (local time). "
+                 "Look for a morning ramp-up, a midday dip, an evening peak, and "
+                 "the overnight trough. Deviations from this typical pattern may "
+                 "reflect city-specific behaviour or data artefacts."),
+            card(f"{city}-Tweet_Day.png", "Tweet Volume by Day of Week",
+                 "Bar chart from Monday to Sunday. Many cities show a weekend "
+                 "uplift (Friday–Saturday). A flat profile suggests a city where "
+                 "tweeting is more work-driven; a strong weekend peak suggests "
+                 "leisure-driven use."),
+            card(f"{city}-Tweet_Month.png", "Tweet Volume by Month",
+                 "Monthly bar chart across 2017. Look for summer peaks (outdoor "
+                 "activity, events) and winter dips, or any outlier months that "
+                 "may correspond to local events or data collection gaps."),
+        ])
+
+    s_sent_spatial = section("sentiment-spatial", "Sentiment — Spatial",
+        "Sentiment scores are pre-computed per tweet on a 0–1 scale where higher "
+        "values are more positive. Tract-level figures require a minimum of 10 "
+        "tweets per tract to reduce noise from small samples.",
+        [
+            card(f"{city}-Sentiment_Map.png", "Mean Sentiment per Tract",
+                 "RdYlGn choropleth: red = lower mean sentiment, green = higher. "
+                 "Compare this to the wealth and disadvantage maps — do deprived "
+                 "areas consistently show lower sentiment? Isolated red tracts "
+                 "in otherwise green areas may reflect specific venues or events "
+                 "rather than general neighbourhood character."),
+            card(f"{city}-Sentiment_Variance.png", "Sentiment Variance per Tract",
+                 "Magma choropleth of sentiment standard deviation per tract. "
+                 "Brighter tracts have more polarised or inconsistent sentiment — "
+                 "a mix of very positive and very negative tweets. Dark tracts "
+                 "are emotionally homogeneous. High variance in a high-footfall "
+                 "tract (e.g. a transit hub) often reflects a diverse passing "
+                 "population rather than a resident community."),
+        ])
+
+    s_sent_income = section("sentiment-income", "Sentiment vs Income",
+        "Each point represents one census tract. Only tracts with at least 10 "
+        "tweets are included.",
+        [
+            card(f"{city}-Sentiment_vs_Income.png", "Sentiment vs Income Scatter",
+                 "X-axis: weighted income score ($k). Y-axis: mean sentiment. "
+                 "Dot colour encodes tweet count on a log scale (plasma). "
+                 "The dashed trend line shows the linear relationship. "
+                 "A positive slope indicates that wealthier tracts tweet more "
+                 "positively on average. Points far from the trend line are "
+                 "tracts where sentiment diverges from what income alone predicts."),
+            card(f"{city}-Sentiment_Residual.png", "Residual Sentiment vs Income",
+                 "After removing the income trend, residuals above zero are tracts "
+                 "that are more positive than their income would predict; below "
+                 "zero are less positive. Dot colour = log tweet count. "
+                 "Systematic patterns in the residuals (e.g. all low-income "
+                 "tracts being above zero) suggest another variable is at work."),
+            card(f"{city}-Sentiment_Income_Boxplot.png", "Sentiment by Income Quintile",
+                 "Tracts grouped into five equal-sized income quintiles. Each box "
+                 "shows the median (centre line), interquartile range (box), and "
+                 "outliers (strip dots). A rising median from left to right "
+                 "confirms a positive income–sentiment relationship. Overlapping "
+                 "boxes suggest the relationship is weak in this city."),
+        ])
+
+    s_sent_census = section("sentiment-census", "Sentiment vs Census Variables",
+        "Tract-level sentiment correlated with other socioeconomic indicators. "
+        "Dot size is scaled by tweet count so higher-confidence tracts appear larger.",
+        [
+            card(f"{city}-Sentiment_Census_Scatter.png", "Sentiment vs Census Variables",
+                 "Six-panel scatter grid covering population density, unemployment, "
+                 "education (Bachelor's+), owner-occupied housing, affluence score, "
+                 "and disadvantage score. Each panel has its own trend line. "
+                 "Compare slopes across panels to see which variables have the "
+                 "strongest relationship with sentiment in this city."),
+            card(f"{city}-Sentiment_Disadvantage_Boxplot.png", "Sentiment by Disadvantage Quintile",
+                 "Tracts divided into five disadvantage quintiles. Expect a "
+                 "declining median from left (least deprived) to right (most "
+                 "deprived) if disadvantage suppresses sentiment. Wide boxes in "
+                 "the high-disadvantage quintiles indicate high within-group variation."),
+            card(f"{city}-Sentiment_Education_Boxplot.png", "Sentiment by Dominant Education Level",
+                 "Each box covers tracts where the plurality of residents share "
+                 "that education level. A step-up from < High School to Bachelor's+ "
+                 "would indicate an education–sentiment gradient. Check whether "
+                 "the pattern mirrors the income quintile chart."),
+            card(f"{city}-Sentiment_Age_Boxplot.png", "Sentiment by Dominant Age Group",
+                 "Tracts grouped by their dominant age group. Younger-skewing tracts "
+                 "(18–29 dominant) often show different sentiment profiles due to "
+                 "different tweeting behaviour, not necessarily neighbourhood character. "
+                 "Consider this alongside the age distribution maps."),
+        ])
+
+    s_sent_ethnicity = section("sentiment-ethnicity", "Sentiment vs Race & Ethnicity",
+        "Tract-level sentiment correlated with racial and ethnic composition. "
+        "These relationships reflect neighbourhood-level patterns in the data, "
+        "not individual-level effects.",
+        [
+            card(f"{city}-Sentiment_Ethnicity_Scatter.png", "Sentiment vs Ethnicity Proportions",
+                 "Four-panel scatter grid: sentiment against the proportion of "
+                 "Non-Hispanic White, Non-Hispanic Black, Hispanic, and Born Outside "
+                 "the U.S. residents in each tract. Trend lines show direction and "
+                 "strength of association. Dot size scales with tweet count. "
+                 "These tract-level correlations should be interpreted alongside "
+                 "the income and disadvantage charts — ethnicity and socioeconomic "
+                 "status are spatially confounded in most US cities."),
+            card(f"{city}-Sentiment_Ethnicity_Boxplot.png", "Sentiment by Dominant Ethnicity Group",
+                 "Sentiment distribution for tracts where each group is the plurality. "
+                 "Differences between boxes may reflect underlying socioeconomic "
+                 "conditions rather than direct ethnicity effects. Compare the "
+                 "median positions here to the ethnicity vs income heatmap to "
+                 "see whether income accounts for observed differences."),
+        ])
+
+    s_sent_slopes = section("sentiment-slopes", "Sentiment Trend Slopes",
+        "A linear slope is fitted to each tract's daily mean sentiment across 2017. "
+        "Tracts with fewer than 14 daily observations are excluded to avoid noisy fits. "
+        "Slope is in sentiment units per day.",
+        [
+            card(f"{city}-Sentiment_Slope_Map.png", "Sentiment Trend Slope Map",
+                 "Coolwarm diverging choropleth centred at zero: blue tracts had "
+                 "improving sentiment across 2017; red tracts had declining sentiment. "
+                 "The scale is symmetric and clipped to the 95th percentile. "
+                 "Compare this to the mean sentiment map — a tract can have "
+                 "high mean sentiment but a declining slope, or low mean sentiment "
+                 "but an improving trajectory."),
+            card(f"{city}-Sentiment_Slope_Census.png", "Sentiment Slope vs Census Variables",
+                 "Six-panel scatter grid of the per-tract trend slope against income, "
+                 "population density, unemployment, education, affluence, and disadvantage. "
+                 "The horizontal dashed line at zero separates improving from declining "
+                 "tracts. Trend lines show whether higher values of each census variable "
+                 "are associated with sentiment improving or declining over the year. "
+                 "A flat trend line means the census variable does not predict trajectory, "
+                 "even if it predicts the mean level."),
+        ])
+
+    s_sent_time = section("sentiment-time", "Sentiment vs Time",
+        "All timestamps are in the city's local timezone. Figures cover the "
+        "full 2017 calendar year.",
+        [
+            card(f"{city}-Sentiment_Weekday_Weekend.png", "Weekday vs Weekend Sentiment by Hour",
+                 "Two overlaid lines: green = weekday average (Mon–Fri), red dashed "
+                 "= weekend (Sat–Sun). X-axis is hour of day in local time. "
+                 "Divergence between the lines shows where weekday and weekend "
+                 "sentiment patterns differ most. Late-night weekend uplift or "
+                 "morning weekday dips are common patterns worth noting."),
+            card(f"{city}-Sentiment_Hour.png", "Mean Sentiment by Hour of Day",
+                 "Bar chart of mean sentiment across the 24-hour clock with 95% "
+                 "confidence interval error bars. Hours with wider bars have more "
+                 "variable sentiment across tracts or days. Late-night hours "
+                 "typically have fewer tweets so confidence intervals are wider."),
+            card(f"{city}-Sentiment_Day.png", "Mean Sentiment by Day of Week",
+                 "Mean sentiment Monday through Sunday with 95% confidence intervals. "
+                 "Compare to the tweet volume day chart — days with more tweets "
+                 "tend to have narrower confidence intervals. Weekend vs weekday "
+                 "differences here complement the hourly weekday/weekend comparison."),
+            card(f"{city}-Sentiment_Month.png", "Mean Sentiment by Month",
+                 "Monthly mean sentiment with 95% confidence intervals. Look for "
+                 "seasonal patterns: some cities show higher sentiment in summer "
+                 "months, others in winter. Months with very wide error bars "
+                 "may have had fewer tweets or a high-variance news cycle."),
+            card(f"{city}-Sentiment_Timeseries.png", "Daily Sentiment Over Time",
+                 "Faint line = raw daily mean; solid line = 7-day rolling average. "
+                 "The rolling average smooths day-to-day noise and reveals broader "
+                 "trends. Sharp dips or spikes in the raw line that are not "
+                 "reflected in the rolling average are likely one-off events. "
+                 "Sustained shifts in the rolling average suggest a genuine change."),
+            card(f"{city}-Sentiment_Heatmap.png", "Sentiment Heatmap: Hour × Day of Week",
+                 "Rows = days of the week, columns = hours of the day. Cell colour "
+                 "shows mean sentiment for that hour-day combination (RdYlGn). "
+                 "This combines the hour and day charts into one view. Look for "
+                 "blocks of consistently low sentiment (e.g. Monday mornings) "
+                 "or high sentiment (e.g. Saturday evenings)."),
+        ])
+
+    s_extremes = section("sentiment-extremes", "Extreme Sentiment",
+        f"Positive tweets are defined as sentiment score &gt; {0.65}; "
+        f"negative as &lt; {0.35}. Values show the percentage of tweets "
+        "in each time bin that cross each threshold.",
+        [
+            card(f"{city}-Sentiment_Extremes_Hour.png", "Extreme Sentiment by Hour",
+                 "Grouped bars per hour: green = % positive tweets, red = % negative. "
+                 "The gap between the two bars shows the net emotional balance at "
+                 "each hour. Hours where both bars are high indicate polarised "
+                 "tweeting behaviour; hours where both are low indicate a large "
+                 "neutral middle."),
+            card(f"{city}-Sentiment_Extremes_Day.png", "Extreme Sentiment by Day of Week",
+                 "Same grouped bar format by day of week. A narrowing gap between "
+                 "positive and negative bars on certain days (e.g. Mondays) can "
+                 "signal emotionally charged periods even if the mean looks flat."),
+            card(f"{city}-Sentiment_Extremes_Month.png", "Extreme Sentiment by Month",
+                 "Monthly grouped bars showing the share of very positive and very "
+                 "negative tweets. Compare to the mean monthly chart — a month "
+                 "can have a stable mean while simultaneously having high rates "
+                 "of both extremes if polarisation is high."),
+            card(f"{city}-Sentiment_Extremes_Timeseries.png", "Extreme Sentiment Over Time",
+                 "Daily rolling proportions of positive (green) and negative (red) "
+                 "tweets across 2017. Faint lines = raw daily values; solid lines "
+                 "= 7-day rolling averages. Watch for periods where positive and "
+                 "negative proportions move in opposite directions (polarisation "
+                 "shifting) vs periods where both rise or fall together."),
+        ])
+
+    # ---- Assemble nav and page ----
+
+    all_sections = [
+        s_general, s_wealth, s_age, s_density, s_edu,
+        s_labour, s_housing, s_indices, s_ethnicity,
+        s_tweets, s_sent_spatial, s_sent_income,
+        s_sent_census, s_sent_ethnicity, s_sent_slopes, s_sent_time, s_extremes,
+    ]
+
+    nav_items = {
+        "general":            "General Stats",
+        "wealth":             "Wealth",
+        "age":                "Age",
+        "density":            "Population Density",
+        "education":          "Education",
+        "labour":             "Labour Market",
+        "housing":            "Housing",
+        "indices":            "Neighbourhood Indices",
+        "ethnicity":          "Race & Ethnicity",
+        "tweets":             "Tweet Statistics",
+        "sentiment-spatial":  "Sentiment: Spatial",
+        "sentiment-income":   "Sentiment: Income",
+        "sentiment-census":   "Sentiment: Census",
+        "sentiment-ethnicity":"Sentiment: Ethnicity",
+        "sentiment-slopes":   "Sentiment: Slopes",
+        "sentiment-time":     "Sentiment: Time",
+        "sentiment-extremes": "Sentiment: Extremes",
+    }
+
+    nav_html = "\n".join(
+        f'<a href="#{anchor}">{label}</a>'
+        for anchor, label in nav_items.items()
+        if any(f'id="{anchor}"' in s for s in all_sections)
+    )
+
+    body = "\n".join(s for s in all_sections if s)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{city} — Twitter Sentiment Analysis</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: Georgia, 'Times New Roman', serif; background: #f4f4f0;
+          color: #1a1a1a; line-height: 1.6; }}
+  header {{ background: #06402B; color: white; padding: 30px 40px; }}
+  header h1 {{ font-size: 2rem; font-weight: normal; }}
+  header p  {{ margin-top: 6px; opacity: 0.8; font-size: 0.95rem; }}
+  nav {{ background: #0a5c3e; padding: 10px 40px; display: flex;
+         flex-wrap: wrap; gap: 6px; position: sticky; top: 0; z-index: 100; }}
+  nav a {{ color: #c8e6c9; text-decoration: none; font-size: 0.8rem;
+           padding: 4px 10px; border-radius: 3px; font-family: sans-serif; }}
+  nav a:hover {{ background: rgba(255,255,255,0.15); color: white; }}
+  main {{ max-width: 1300px; margin: 0 auto; padding: 30px 40px 60px; }}
+  section {{ margin-bottom: 50px; }}
+  section h2 {{ font-size: 1.3rem; font-weight: normal; letter-spacing: 0.05em;
+                text-transform: uppercase; color: #06402B; border-bottom: 2px solid #06402B;
+                padding-bottom: 8px; margin-bottom: 8px; }}
+  p.intro {{ color: #444; font-size: 0.9rem; margin-bottom: 20px; font-family: sans-serif; }}
+  .card {{ background: white; border-radius: 6px; padding: 20px;
+           margin-bottom: 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+           display: flex; gap: 24px; align-items: flex-start; }}
+  .card img {{ max-width: 65%; border-radius: 3px; flex-shrink: 0; }}
+  .caption {{ flex: 1; }}
+  .caption h3 {{ font-size: 1rem; color: #06402B; margin-bottom: 8px; }}
+  .caption p  {{ font-size: 0.88rem; color: #333; font-family: sans-serif; line-height: 1.65; }}
+  @media (max-width: 800px) {{
+    .card {{ flex-direction: column; }}
+    .card img {{ max-width: 100%; }}
+    main {{ padding: 20px; }}
+  }}
+</style>
+</head>
+<body>
+<header>
+  <h1>{city} — Twitter Sentiment Analysis</h1>
+  <p>Census data: ACS 2013–2017 five-year estimates (NaNDA / ICPSR). Tweet data: 2017.</p>
+</header>
+<nav>{nav_html}</nav>
+<main>{body}</main>
+</body>
+</html>"""
+
+    out_path = pages_dir / f"{city}.html"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
 def get_city_names():
     return gpd.read_file(CITIES_SHAPEFILE)["NAME"].tolist()
 
@@ -365,6 +860,42 @@ if __name__ == "__main__":
     save_figure(figures_dir / f"{args.city}-Dominant_Education.png", dpi=300, bbox_inches='tight')
     plt.close()
 
+    # - Income vs Education Heatmap -
+
+    income_edu = census_income[['TRACT_FIPS10'] + income_cols].merge(
+        census_edu[['TRACT_FIPS10'] + edu_cols], on='TRACT_FIPS10'
+    )
+    income_edu['income_bracket'] = income_edu[income_cols].idxmax(axis=1).map(
+        dict(zip(income_cols, income_labels))
+    )
+
+    inc_edu_heatmap = (
+        income_edu.groupby('income_bracket')[edu_cols]
+        .mean()
+        .rename(columns=dict(zip(edu_cols, edu_labels)))
+        .reindex(income_labels)
+    )
+
+    yg = LinearSegmentedColormap.from_list('ylgn', plt.colormaps['YlGn'](np.linspace(0.2, 1.0, 256)))
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    im = ax.imshow(inc_edu_heatmap.values, cmap=yg, aspect='auto')
+    ax.set_xticks(range(len(edu_labels)))
+    ax.set_xticklabels(edu_labels)
+    ax.set_yticks(range(len(income_labels)))
+    ax.set_yticklabels(income_labels)
+    ax.set_xlabel('Education Level')
+    ax.set_ylabel('Dominant Income Bracket')
+    for i in range(len(income_labels)):
+        for j in range(len(edu_labels)):
+            ax.text(j, i, f"{inc_edu_heatmap.values[i, j]:.2f}",
+                    ha='center', va='center', fontsize=9, color='white')
+    plt.colorbar(im, ax=ax, label='Mean proportion of tract population')
+    plt.title(f'Education Distribution by Income Bracket — {args.city}')
+    plt.tight_layout()
+    save_figure(figures_dir / f"{args.city}-Income_vs_Education.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
     # - Unemployment -
 
     unemp_col = 'PUNEMP13_17'
@@ -441,6 +972,120 @@ if __name__ == "__main__":
     plt.suptitle(f'Neighbourhood Scores across {args.city} Census Tracts', fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     save_figure(figures_dir / f"{args.city}-Affluence_Disadvantage.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # - Race & Ethnicity -
+
+    ethnicity_cols   = ['PNHWHITE13_17', 'PNHBLACK13_17', 'PHISPANIC13_17', 'PFBORN13_17']
+    ethnicity_labels = ['Non-Hispanic White', 'Non-Hispanic Black', 'Hispanic', 'Born Outside the U.S.']
+
+    census_ethnicity = census[['TRACT_FIPS10'] + ethnicity_cols].copy()
+    census_ethnicity[ethnicity_cols] = census_ethnicity[ethnicity_cols].apply(pd.to_numeric, errors='coerce')
+    census_ethnicity = census_ethnicity.dropna(subset=ethnicity_cols)
+
+    ethnicity_gdf = all_tracts.merge(census_ethnicity, left_on='GEOID', right_on='TRACT_FIPS10', how='inner')
+
+    oranges_clipped = LinearSegmentedColormap.from_list(
+        'oranges_eth', plt.colormaps['Oranges'](np.linspace(0.2, 1.0, 256))
+    )
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 16))
+
+    for ax, col, label in zip(axes.flatten(), ethnicity_cols, ethnicity_labels):
+        vmin = ethnicity_gdf[col].quantile(0.05)
+        vmax = ethnicity_gdf[col].quantile(0.95)
+        ethnicity_gdf.plot(column=col, cmap=oranges_clipped, legend=True, ax=ax,
+                           vmin=vmin, vmax=vmax,
+                           legend_kwds={'shrink': 0.6, 'label': '% of population'})
+        city_bounds.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1.5)
+        ax.set_title(label)
+        ax.axis('off')
+
+    plt.suptitle(f'Race & Ethnicity across {args.city} Census Tracts', fontsize=16)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    save_figure(figures_dir / f"{args.city}-Race_Ethnicity.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # - Dominant Ethnicity Group -
+
+    ethnicity_gdf['dominant_ethnicity'] = (
+        ethnicity_gdf[ethnicity_cols].idxmax(axis=1).map(dict(zip(ethnicity_cols, ethnicity_labels)))
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 12))
+    ethnicity_gdf.plot(column='dominant_ethnicity', cmap='tab10', legend=True, ax=ax,
+                       legend_kwds={'title': 'Dominant Group', 'loc': 'upper left',
+                                    'bbox_to_anchor': (1, 1), 'frameon': True})
+    city_bounds.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1.5)
+    ax.set_title(f'Dominant Race/Ethnicity Group across {args.city} Census Tracts', fontsize=14)
+    ax.axis('off')
+    save_figure(figures_dir / f"{args.city}-Dominant_Ethnicity.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # - Ethnicity vs Income Heatmap -
+
+    ethnicity_income = census_ethnicity[['TRACT_FIPS10'] + ethnicity_cols].merge(
+        census_income[['TRACT_FIPS10'] + income_cols], on='TRACT_FIPS10'
+    )
+    ethnicity_income['dominant_ethnicity'] = (
+        ethnicity_income[ethnicity_cols].idxmax(axis=1).map(dict(zip(ethnicity_cols, ethnicity_labels)))
+    )
+
+    eth_income_heatmap = (
+        ethnicity_income.groupby('dominant_ethnicity')[income_cols]
+        .mean()
+        .rename(columns=dict(zip(income_cols, income_labels)))
+    )
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    im = ax.imshow(eth_income_heatmap.values, cmap=oranges_clipped, aspect='auto')
+    ax.set_xticks(range(len(income_labels)))
+    ax.set_xticklabels(income_labels)
+    ax.set_yticks(range(len(eth_income_heatmap)))
+    ax.set_yticklabels(eth_income_heatmap.index)
+    ax.set_xlabel('Income Bracket')
+    ax.set_ylabel('Dominant Ethnicity Group')
+    for i in range(len(eth_income_heatmap)):
+        for j in range(len(income_labels)):
+            ax.text(j, i, f"{eth_income_heatmap.values[i, j]:.2f}",
+                    ha='center', va='center', fontsize=9, color='white')
+    plt.colorbar(im, ax=ax, label='Mean proportion of tract population')
+    plt.title(f'Income Distribution by Dominant Ethnicity — {args.city}')
+    plt.tight_layout()
+    save_figure(figures_dir / f"{args.city}-Ethnicity_vs_Income.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    # - Ethnicity vs Education Heatmap -
+
+    ethnicity_edu = census_ethnicity[['TRACT_FIPS10'] + ethnicity_cols].merge(
+        census_edu[['TRACT_FIPS10'] + edu_cols], on='TRACT_FIPS10'
+    )
+    ethnicity_edu['dominant_ethnicity'] = (
+        ethnicity_edu[ethnicity_cols].idxmax(axis=1).map(dict(zip(ethnicity_cols, ethnicity_labels)))
+    )
+
+    eth_edu_heatmap = (
+        ethnicity_edu.groupby('dominant_ethnicity')[edu_cols]
+        .mean()
+        .rename(columns=dict(zip(edu_cols, edu_labels)))
+    )
+
+    fig, ax = plt.subplots(figsize=(9, 4))
+    im = ax.imshow(eth_edu_heatmap.values, cmap=oranges_clipped, aspect='auto')
+    ax.set_xticks(range(len(edu_labels)))
+    ax.set_xticklabels(edu_labels)
+    ax.set_yticks(range(len(eth_edu_heatmap)))
+    ax.set_yticklabels(eth_edu_heatmap.index)
+    ax.set_xlabel('Education Level')
+    ax.set_ylabel('Dominant Ethnicity Group')
+    for i in range(len(eth_edu_heatmap)):
+        for j in range(len(edu_labels)):
+            ax.text(j, i, f"{eth_edu_heatmap.values[i, j]:.2f}",
+                    ha='center', va='center', fontsize=9, color='white')
+    plt.colorbar(im, ax=ax, label='Mean proportion of tract population')
+    plt.title(f'Education Distribution by Dominant Ethnicity — {args.city}')
+    plt.tight_layout()
+    save_figure(figures_dir / f"{args.city}-Ethnicity_vs_Education.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # ---- Tweet Statistics ----
@@ -571,6 +1216,30 @@ if __name__ == "__main__":
         save_figure(figures_dir / f"{args.city}-Sentiment_Map.png", dpi=300, bbox_inches="tight")
         plt.close()
 
+        # - Sentiment Variance Map -
+
+        tract_variance = (
+            joined.dropna(subset=["sentiment"])
+            .groupby("GEOID")["sentiment"]
+            .std()
+            .reset_index()
+            .rename(columns={"sentiment": "sentiment_std"})
+        )
+
+        variance_map = city_gdf.merge(tract_variance, on="GEOID", how="left")
+        vmin = variance_map["sentiment_std"].quantile(0.05)
+        vmax = variance_map["sentiment_std"].quantile(0.95)
+
+        fig, ax = plt.subplots(figsize=(10, 12))
+        variance_map.plot(column="sentiment_std", cmap="magma", legend=True, ax=ax,
+                          vmin=vmin, vmax=vmax,
+                          legend_kwds={"label": "Sentiment Std. Dev.", "shrink": 0.6})
+        city_bounds.plot(ax=ax, facecolor="none", edgecolor="white", linewidth=1.5)
+        ax.set_title(f"Tweet Sentiment Variance — {args.city}", fontsize=14)
+        ax.axis("off")
+        save_figure(figures_dir / f"{args.city}-Sentiment_Variance.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
         # Merge with income — filter low-sample tracts
         sentiment_income = (
             tract_sentiment
@@ -649,6 +1318,7 @@ if __name__ == "__main__":
             .merge(census_edu[["TRACT_FIPS10", "PED3_13_17"]], on="TRACT_FIPS10")
             .merge(census_owned,                              on="TRACT_FIPS10")
             .merge(census_scores,                             on="TRACT_FIPS10")
+            .merge(census_ethnicity,                          on="TRACT_FIPS10")
             .pipe(lambda d: d[d["total_tweets"] >= 10])
             .dropna()
         )
@@ -756,6 +1426,134 @@ if __name__ == "__main__":
         save_figure(figures_dir / f"{args.city}-Sentiment_Age_Boxplot.png", dpi=300, bbox_inches="tight")
         plt.close()
 
+        # - Sentiment vs Ethnicity Scatter Grid -
+
+        ethnicity_scatter_vars = [
+            ("PNHWHITE13_17", "Proportion Non-Hispanic White", "Sentiment vs % Non-Hispanic White"),
+            ("PNHBLACK13_17", "Proportion Non-Hispanic Black", "Sentiment vs % Non-Hispanic Black"),
+            ("PHISPANIC13_17","Proportion Hispanic",           "Sentiment vs % Hispanic"),
+            ("PFBORN13_17",   "Proportion Born Outside the U.S.", "Sentiment vs % Born Outside the U.S."),
+        ]
+
+        fig, axes = plt.subplots(2, 2, figsize=(14, 11))
+        for ax, (col, xlabel, title) in zip(axes.flatten(), ethnicity_scatter_vars):
+            x = sentiment_census[col]
+            y = sentiment_census["mean_sentiment"]
+            sizes = sentiment_census["total_tweets"] / sentiment_census["total_tweets"].max() * 35 + 5
+            ax.scatter(x, y, s=sizes, alpha=0.4, color="#06402B")
+            z = np.polyfit(x, y, 1)
+            x_line = np.linspace(x.min(), x.max(), 200)
+            ax.plot(x_line, np.polyval(z, x_line), color="crimson", linewidth=1.5)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Mean Sentiment")
+            ax.set_title(title)
+
+        plt.suptitle(f"Tweet Sentiment vs Race & Ethnicity — {args.city}", fontsize=15)
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        save_figure(figures_dir / f"{args.city}-Sentiment_Ethnicity_Scatter.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Sentiment by Dominant Ethnicity Group -
+
+        census_eth_dom = census_ethnicity.copy()
+        census_eth_dom["dominant_ethnicity"] = (
+            census_eth_dom[ethnicity_cols].idxmax(axis=1).map(dict(zip(ethnicity_cols, ethnicity_labels)))
+        )
+
+        sentiment_eth = (
+            tract_sentiment
+            .merge(census_eth_dom[["TRACT_FIPS10", "dominant_ethnicity"]], left_on="GEOID", right_on="TRACT_FIPS10")
+            .pipe(lambda d: d[d["total_tweets"] >= 10])
+            .dropna()
+        )
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        sns.boxplot(data=sentiment_eth, x="dominant_ethnicity", y="mean_sentiment", color="#595358", ax=ax)
+        sns.stripplot(data=sentiment_eth, x="dominant_ethnicity", y="mean_sentiment",
+                      color="black", alpha=0.3, size=2, ax=ax)
+        ax.set_xlabel("Dominant Race/Ethnicity Group")
+        ax.set_ylabel("Mean Sentiment")
+        ax.set_title(f"Sentiment by Dominant Race/Ethnicity Group — {args.city}")
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Ethnicity_Boxplot.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # ---- Sentiment Trend Slopes ----
+
+        # Fit a linear slope of daily mean sentiment over time for each tract
+        tweet_data["day_num"] = (
+            pd.to_datetime(tweet_data["date"]) - pd.to_datetime(tweet_data["date"]).min()
+        ).dt.days
+
+        def tract_slope(grp):
+            if len(grp) < 14:
+                return np.nan
+            x = grp["day_num"].values
+            y = grp["mean_sentiment"].values
+            return np.polyfit(x, y, 1)[0]
+
+        slopes = (
+            tweet_data.groupby("GEOID")
+            .apply(tract_slope)
+            .reset_index()
+            .rename(columns={0: "slope"})
+        )
+        slopes["GEOID"] = slopes["GEOID"].astype(str).str.zfill(11)
+
+        # - Sentiment Trend Slope Choropleth -
+
+        slope_map = city_gdf.merge(slopes, on="GEOID", how="left")
+        abs_max = slope_map["slope"].abs().quantile(0.95)
+
+        fig, ax = plt.subplots(figsize=(10, 12))
+        slope_map.plot(column="slope", cmap="coolwarm", legend=True, ax=ax,
+                       vmin=-abs_max, vmax=abs_max,
+                       legend_kwds={"label": "Sentiment slope (per day)", "shrink": 0.6})
+        city_bounds.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
+        ax.set_title(f"Sentiment Trend Slope across {args.city} Census Tracts", fontsize=14)
+        ax.axis("off")
+        save_figure(figures_dir / f"{args.city}-Sentiment_Slope_Map.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Sentiment Slope vs Census Variables Scatter Grid -
+
+        sentiment_slopes = (
+            slopes
+            .merge(sentiment_census.drop(columns=["mean_sentiment", "total_tweets"],
+                                         errors="ignore"), on="GEOID", how="inner")
+            .dropna(subset=["slope"])
+        )
+
+        slope_vars = [
+            ("INCOME_SCORE",      "Weighted Income Score ($k)",          "Slope vs Income"),
+            ("POPDEN13_17",       "Population Density (persons/sq mi)",  "Slope vs Population Density"),
+            ("PUNEMP13_17",       "Proportion Unemployed",               "Slope vs Unemployment"),
+            ("PED3_13_17",        "Proportion with Bachelor's+",         "Slope vs Education"),
+            ("AFFLUENCE13_17",    "Affluence Score",                     "Slope vs Affluence"),
+            ("DISADVANTAGE13_17", "Disadvantage Score",                  "Slope vs Disadvantage"),
+        ]
+
+        fig, axes = plt.subplots(2, 3, figsize=(18, 11))
+        for ax, (col, xlabel, title) in zip(axes.flatten(), slope_vars):
+            if col not in sentiment_slopes.columns:
+                ax.set_visible(False)
+                continue
+            x = sentiment_slopes[col]
+            y = sentiment_slopes["slope"]
+            ax.scatter(x, y, alpha=0.4, s=10, color="#06402B")
+            ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
+            z = np.polyfit(x, y, 1)
+            x_line = np.linspace(x.min(), x.max(), 200)
+            ax.plot(x_line, np.polyval(z, x_line), color="crimson", linewidth=1.5)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Sentiment slope (per day)")
+            ax.set_title(title)
+
+        plt.suptitle(f"Sentiment Trend Slope vs Census Variables — {args.city}", fontsize=15)
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        save_figure(figures_dir / f"{args.city}-Sentiment_Slope_Census.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
         # ---- Sentiment vs Temporal Factors ----
 
         sent_temporal = joined[["timestamp", "sentiment"]].dropna().copy()
@@ -849,6 +1647,33 @@ if __name__ == "__main__":
         save_figure(figures_dir / f"{args.city}-Sentiment_Heatmap.png", dpi=300, bbox_inches="tight")
         plt.close()
 
+        # - Weekend vs Weekday Sentiment by Hour -
+
+        sent_temporal["is_weekend"] = sent_temporal["dayofweek"].isin([5, 6])
+
+        wknd_hourly = (
+            sent_temporal.groupby(["is_weekend", "hour"])["sentiment"]
+            .mean()
+            .unstack(level=0)
+            .reindex(range(24))
+        )
+        wknd_hourly.columns = ["Weekday", "Weekend"]
+
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.plot(range(24), wknd_hourly["Weekday"], color="#06402B", linewidth=2,
+                marker="o", markersize=4, label="Weekday")
+        ax.plot(range(24), wknd_hourly["Weekend"], color="#c0392b", linewidth=2,
+                marker="o", markersize=4, label="Weekend", linestyle="--")
+        ax.set_xlabel("Hour of Day")
+        ax.set_ylabel("Mean Sentiment Score")
+        ax.set_title(f"Weekday vs Weekend Sentiment by Hour — {args.city}")
+        ax.set_xticks(range(24))
+        ax.set_ylim(0, 1)
+        ax.legend()
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Weekday_Weekend.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
         # ---- Extreme Sentiment vs Temporal Factors ----
 
         POS_THRESHOLD = 0.65
@@ -904,3 +1729,8 @@ if __name__ == "__main__":
         plt.tight_layout()
         save_figure(figures_dir / f"{args.city}-Sentiment_Extremes_Timeseries.png", dpi=300, bbox_inches="tight")
         plt.close()
+
+    # ---- Generate HTML Report ----
+
+    pages_dir = out_dir / "Pages"
+    generate_html(args.city, figures_dir, general_figures_dir, pages_dir)
