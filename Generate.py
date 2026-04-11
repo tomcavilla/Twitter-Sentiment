@@ -639,6 +639,123 @@ if __name__ == "__main__":
         save_figure(figures_dir / f"{args.city}-Sentiment_Income_Boxplot.png", dpi=300, bbox_inches="tight")
         plt.close()
 
+        # ---- Sentiment vs Census Variables ----
+
+        # Merge tract sentiment with all relevant census variables
+        sentiment_census = (
+            tract_sentiment
+            .merge(census_unemp,                              left_on="GEOID", right_on="TRACT_FIPS10")
+            .merge(census_density,                            on="TRACT_FIPS10")
+            .merge(census_edu[["TRACT_FIPS10", "PED3_13_17"]], on="TRACT_FIPS10")
+            .merge(census_owned,                              on="TRACT_FIPS10")
+            .merge(census_scores,                             on="TRACT_FIPS10")
+            .pipe(lambda d: d[d["total_tweets"] >= 10])
+            .dropna()
+        )
+
+        # - Sentiment vs Census Variables Scatter Grid -
+
+        census_scatter_vars = [
+            ("POPDEN13_17",       "Population Density (persons/sq mi)",   "Sentiment vs Population Density"),
+            ("PUNEMP13_17",       "Proportion Unemployed",                 "Sentiment vs Unemployment"),
+            ("PED3_13_17",        "Proportion with Bachelor's+",           "Sentiment vs Education"),
+            ("POWNOC13_17",       "Proportion Owner-Occupied Housing",     "Sentiment vs Owner-Occupied Housing"),
+            ("AFFLUENCE13_17",    "Affluence Score",                       "Sentiment vs Affluence"),
+            ("DISADVANTAGE13_17", "Disadvantage Score",                    "Sentiment vs Disadvantage"),
+        ]
+
+        fig, axes = plt.subplots(2, 3, figsize=(18, 11))
+        for ax, (col, xlabel, title) in zip(axes.flatten(), census_scatter_vars):
+            x = sentiment_census[col]
+            y = sentiment_census["mean_sentiment"]
+            sizes = sentiment_census["total_tweets"] / sentiment_census["total_tweets"].max() * 35 + 5
+            ax.scatter(x, y, s=sizes, alpha=0.4, color="#06402B")
+            z = np.polyfit(x, y, 1)
+            x_line = np.linspace(x.min(), x.max(), 200)
+            ax.plot(x_line, np.polyval(z, x_line), color="crimson", linewidth=1.5)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("Mean Sentiment")
+            ax.set_title(title)
+
+        plt.suptitle(f"Tweet Sentiment vs Census Variables — {args.city}", fontsize=15)
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        save_figure(figures_dir / f"{args.city}-Sentiment_Census_Scatter.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Sentiment by Disadvantage Quintile Boxplot -
+
+        sentiment_census["disadvantage_bin"] = pd.qcut(
+            sentiment_census["DISADVANTAGE13_17"], 5,
+            labels=["0–20th\npct", "20–40th\npct", "40–60th\npct", "60–80th\npct", "80–100th\npct"]
+        )
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        sns.boxplot(data=sentiment_census, x="disadvantage_bin", y="mean_sentiment", color="#595358", ax=ax)
+        sns.stripplot(data=sentiment_census, x="disadvantage_bin", y="mean_sentiment",
+                      color="black", alpha=0.3, size=2, ax=ax)
+        ax.set_xlabel("Disadvantage Group (Quintiles)")
+        ax.set_ylabel("Mean Sentiment")
+        ax.set_title(f"Sentiment Distribution Across Disadvantage Groups — {args.city}")
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Disadvantage_Boxplot.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Sentiment by Dominant Education Level -
+
+        census_edu_dom = census_edu.copy()
+        census_edu_dom["dominant_edu"] = (
+            census_edu_dom[edu_cols].idxmax(axis=1).map(dict(zip(edu_cols, edu_labels)))
+        )
+
+        sentiment_edu = (
+            tract_sentiment
+            .merge(census_edu_dom[["TRACT_FIPS10", "dominant_edu"]], left_on="GEOID", right_on="TRACT_FIPS10")
+            .pipe(lambda d: d[d["total_tweets"] >= 10])
+            .dropna()
+        )
+        sentiment_edu["dominant_edu"] = pd.Categorical(
+            sentiment_edu["dominant_edu"], categories=edu_labels, ordered=True
+        )
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.boxplot(data=sentiment_edu, x="dominant_edu", y="mean_sentiment", color="#595358", ax=ax)
+        sns.stripplot(data=sentiment_edu, x="dominant_edu", y="mean_sentiment",
+                      color="black", alpha=0.3, size=2, ax=ax)
+        ax.set_xlabel("Dominant Education Level")
+        ax.set_ylabel("Mean Sentiment")
+        ax.set_title(f"Sentiment by Dominant Education Level — {args.city}")
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Education_Boxplot.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Sentiment by Dominant Age Group -
+
+        census_age_dom = census_age.copy()
+        census_age_dom["dominant_age"] = (
+            census_age_dom[age_cols].idxmax(axis=1).map(dict(zip(age_cols, age_labels)))
+        )
+
+        sentiment_age = (
+            tract_sentiment
+            .merge(census_age_dom[["TRACT_FIPS10", "dominant_age"]], left_on="GEOID", right_on="TRACT_FIPS10")
+            .pipe(lambda d: d[d["total_tweets"] >= 10])
+            .dropna()
+        )
+        sentiment_age["dominant_age"] = pd.Categorical(
+            sentiment_age["dominant_age"], categories=age_labels, ordered=True
+        )
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.boxplot(data=sentiment_age, x="dominant_age", y="mean_sentiment", color="#595358", ax=ax)
+        sns.stripplot(data=sentiment_age, x="dominant_age", y="mean_sentiment",
+                      color="black", alpha=0.3, size=2, ax=ax)
+        ax.set_xlabel("Dominant Age Group")
+        ax.set_ylabel("Mean Sentiment")
+        ax.set_title(f"Sentiment by Dominant Age Group — {args.city}")
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Age_Boxplot.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
         # ---- Sentiment vs Temporal Factors ----
 
         sent_temporal = joined[["timestamp", "sentiment"]].dropna().copy()
@@ -787,5 +904,3 @@ if __name__ == "__main__":
         plt.tight_layout()
         save_figure(figures_dir / f"{args.city}-Sentiment_Extremes_Timeseries.png", dpi=300, bbox_inches="tight")
         plt.close()
-
-        # THEN - Other Census Data
