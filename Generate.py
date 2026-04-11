@@ -11,11 +11,21 @@ import seaborn as sns
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from matplotlib.colors import LinearSegmentedColormap
 from pathlib import Path
+from timezonefinder import TimezoneFinder
 
 
 CITIES_SHAPEFILE = "Utilities/Shapefiles/CityBoundaries.shp"
 
 GENERATED_FIGURES = []
+
+def save_figure(path, **kwargs):
+    plt.savefig(path, **kwargs)
+    GENERATED_FIGURES.append(path)
+
+def to_local(series, tz):
+    if series.dt.tz is None:
+        return series.dt.tz_localize("UTC").dt.tz_convert(tz)
+    return series.dt.tz_convert(tz)
 
 def get_city_names():
     return gpd.read_file(CITIES_SHAPEFILE)["NAME"].tolist()
@@ -65,20 +75,26 @@ if __name__ == "__main__":
         out_dir = Path(__file__).parent / "Out"
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    figures_dir = out_dir / "Figures"
-    figures_dir.mkdir(exist_ok=True)
+    general_figures_dir = out_dir / "Figures"
+    general_figures_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir = out_dir / "Figures" / args.city
+    figures_dir.mkdir(parents=True, exist_ok=True)
 
     # Create gdf of tracts overlapping city boundaries.
 
     city_gdf = city_tracts(args.tracts, args.city)
 
+    # Detect local timezone from city bounding box centre
+    minx, miny, maxx, maxy = city_gdf.total_bounds
+    local_tz = TimezoneFinder().timezone_at(lng=(minx + maxx) / 2, lat=(miny + maxy) / 2) or "UTC"
+
     # ---- General Tweet Stats (Stats.json) ----
 
     stats_path = Path(__file__).parent.parent / "Stats.json"
     tweet_figures = [
-        figures_dir / "Tweet_Count_Top10.png",
-        figures_dir / "Tweet_Count_Top5.png",
-        figures_dir / "Tweet_Count_Months.png",
+        general_figures_dir / "Tweet_Count_Top10.png",
+        general_figures_dir / "Tweet_Count_Top5.png",
+        general_figures_dir / "Tweet_Count_Months.png",
     ]
 
     if stats_path.exists() and not all(f.exists() for f in tweet_figures):
@@ -98,7 +114,7 @@ if __name__ == "__main__":
         ax.xaxis.set_major_formatter(millions_fmt)
         ax.set_title("Top 10 Cities by Tweet Count in 2017")
         plt.tight_layout()
-        plt.savefig(figures_dir / "Tweet_Count_Top10.png", dpi=300, bbox_inches="tight")
+        save_figure(general_figures_dir / "Tweet_Count_Top10.png", dpi=300, bbox_inches="tight")
         plt.close()
 
         fig, ax = plt.subplots(figsize=(10, 3))
@@ -108,7 +124,7 @@ if __name__ == "__main__":
         ax.xaxis.set_major_formatter(millions_fmt)
         ax.set_title("Top 5 Cities by Tweet Count in 2017")
         plt.tight_layout()
-        plt.savefig(figures_dir / "Tweet_Count_Top5.png", dpi=300, bbox_inches="tight")
+        save_figure(general_figures_dir / "Tweet_Count_Top5.png", dpi=300, bbox_inches="tight")
         plt.close()
 
         month_key = ["January", "February", "March", "April", "May", "June",
@@ -138,7 +154,7 @@ if __name__ == "__main__":
         ax.set_xticklabels(month_key, rotation=90)
         ax.set_title("U.S. Tweet Fluctuations by Month in 2017")
         plt.tight_layout()
-        plt.savefig(figures_dir / "Tweet_Count_Months.png", dpi=300, bbox_inches="tight")
+        save_figure(general_figures_dir / "Tweet_Count_Months.png", dpi=300, bbox_inches="tight")
         plt.close()
 
     # ---- General Census Data ----
@@ -169,9 +185,11 @@ if __name__ == "__main__":
         census_income[col] * mid for col, mid in zip(income_cols, midpoints)
     )
 
-    gdf = gpd.read_file("Utilities/Shapefiles/New York Tracts/tl_2017_36_tract.shp")  
-    gdf = gdf.merge(census_income[['TRACT_FIPS10', 'INCOME_SCORE']], 
-                    left_on='GEOID', right_on='TRACT_FIPS10')
+    all_tracts = gpd.read_file(args.tracts)
+    all_tracts['GEOID'] = all_tracts['GEOID'].astype(str).str.zfill(11)
+
+    gdf = all_tracts.merge(census_income[['TRACT_FIPS10', 'INCOME_SCORE']],
+                           left_on='GEOID', right_on='TRACT_FIPS10')
 
     gdf.plot(
         column='INCOME_SCORE',
@@ -182,16 +200,13 @@ if __name__ == "__main__":
     )
     plt.title(f'Wealth Distribution across {args.city} Census Tracts')
     plt.axis('off')
-    plt.savefig(figures_dir / f"{args.city}-Wealth_Distribution.png", dpi=300)
+    save_figure(figures_dir / f"{args.city}-Wealth_Distribution.png", dpi=300)
     plt.close()
 
     # - Age Distribution -
 
     age_cols = ['P18_2913_17', 'P30_3913_17', 'P40_4913_17', 'P50_6913_17', 'PGE7013_17']
     age_labels = ['18–29', '30–39', '40–49', '50–69', '70+']
-
-    all_tracts = gpd.read_file(args.tracts)
-    all_tracts['GEOID'] = all_tracts['GEOID'].astype(str).str.zfill(11)
 
     census_age = census[['TRACT_FIPS10'] + age_cols].copy()
     census_age[age_cols] = census_age[age_cols].apply(pd.to_numeric, errors='coerce')
@@ -223,7 +238,7 @@ if __name__ == "__main__":
 
     plt.suptitle(f'Age Distribution across {args.city} Census Tracts', fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    plt.savefig(figures_dir / f"{args.city}-Age_Distribution.png", dpi=300)
+    save_figure(figures_dir / f"{args.city}-Age_Distribution.png", dpi=300)
     plt.close()
 
     # - Dominant Age Group -
@@ -237,7 +252,7 @@ if __name__ == "__main__":
     city_bounds.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1.5)
     ax.set_title(f'Dominant Age Group across {args.city} Census Tracts', fontsize=14)
     ax.axis('off')
-    plt.savefig(figures_dir / f"{args.city}-Dominant_Age.png", dpi=300, bbox_inches='tight')
+    save_figure(figures_dir / f"{args.city}-Dominant_Age.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # - Income vs Age Heatmap -
@@ -276,7 +291,7 @@ if __name__ == "__main__":
     plt.colorbar(im, ax=ax, label='Mean % of tract population')
     plt.title(f'Income vs Age Group across {args.city} Census Tracts')
     plt.tight_layout()
-    plt.savefig(figures_dir / f"{args.city}-Income_vs_Age.png", dpi=300, bbox_inches='tight')
+    save_figure(figures_dir / f"{args.city}-Income_vs_Age.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # - Population Density -
@@ -299,7 +314,7 @@ if __name__ == "__main__":
     city_bounds.plot(ax=ax, facecolor='none', edgecolor='white', linewidth=1.5)
     ax.set_title(f'Population Density across {args.city} Census Tracts', fontsize=14)
     ax.axis('off')
-    plt.savefig(figures_dir / f"{args.city}-Population_Density.png", dpi=300, bbox_inches='tight')
+    save_figure(figures_dir / f"{args.city}-Population_Density.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # - Education Levels -
@@ -329,7 +344,7 @@ if __name__ == "__main__":
 
     plt.suptitle(f'Education Levels across {args.city} Census Tracts', fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    plt.savefig(figures_dir / f"{args.city}-Education_Levels.png", dpi=300, bbox_inches='tight')
+    save_figure(figures_dir / f"{args.city}-Education_Levels.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # - Dominant Education Level -
@@ -347,7 +362,7 @@ if __name__ == "__main__":
     city_bounds.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1.5)
     ax.set_title(f'Dominant Education Level across {args.city} Census Tracts', fontsize=14)
     ax.axis('off')
-    plt.savefig(figures_dir / f"{args.city}-Dominant_Education.png", dpi=300, bbox_inches='tight')
+    save_figure(figures_dir / f"{args.city}-Dominant_Education.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # - Unemployment -
@@ -370,7 +385,7 @@ if __name__ == "__main__":
     city_bounds.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1.5)
     ax.set_title(f'Unemployment across {args.city} Census Tracts', fontsize=14)
     ax.axis('off')
-    plt.savefig(figures_dir / f"{args.city}-Unemployment.png", dpi=300, bbox_inches='tight')
+    save_figure(figures_dir / f"{args.city}-Unemployment.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # - Owner-Occupied Housing -
@@ -395,7 +410,7 @@ if __name__ == "__main__":
     city_bounds.plot(ax=ax, facecolor='none', edgecolor='black', linewidth=1.5)
     ax.set_title(f'Owner-Occupied Housing across {args.city} Census Tracts', fontsize=14)
     ax.axis('off')
-    plt.savefig(figures_dir / f"{args.city}-Owner_Occupied_Housing.png", dpi=300, bbox_inches='tight')
+    save_figure(figures_dir / f"{args.city}-Owner_Occupied_Housing.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # - Affluence & Disadvantage Scores -
@@ -425,7 +440,7 @@ if __name__ == "__main__":
 
     plt.suptitle(f'Neighbourhood Scores across {args.city} Census Tracts', fontsize=16)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    plt.savefig(figures_dir / f"{args.city}-Affluence_Disadvantage.png", dpi=300, bbox_inches='tight')
+    save_figure(figures_dir / f"{args.city}-Affluence_Disadvantage.png", dpi=300, bbox_inches='tight')
     plt.close()
 
     # ---- Tweet Statistics ----
@@ -491,50 +506,12 @@ if __name__ == "__main__":
         city_bounds.plot(ax=ax, facecolor="none", edgecolor="white", linewidth=1.5)
         ax.set_title(f"Tweet Count per Census Tract — {args.city}", fontsize=14)
         ax.axis("off")
-        plt.savefig(figures_dir / f"{args.city}-Tweet_Count.png", dpi=300, bbox_inches="tight")
-        plt.close()
-
-        # - Tweet Count Scatter Plots -
-
-        scatter_census = census[['TRACT_FIPS10', 'POPDEN13_17', 'PUNEMP13_17', 'PED3_13_17']].copy()
-        scatter_census = scatter_census.apply(pd.to_numeric, errors='coerce')
-        scatter_census['TRACT_FIPS10'] = census['TRACT_FIPS10']
-
-        scatter_df = (
-            tweet_count_gdf[["GEOID", "tweet_count"]]
-            .merge(census_income[["TRACT_FIPS10", "INCOME_SCORE"]], left_on="GEOID", right_on="TRACT_FIPS10")
-            .merge(scatter_census, on="TRACT_FIPS10")
-            .dropna()
-        )
-        scatter_df = scatter_df[scatter_df["tweet_count"] > 0]
-
-        scatter_vars = [
-            ("INCOME_SCORE", "Weighted Income Score ($k)", "Tweet Count vs Income"),
-            ("PED3_13_17",   "Proportion with Bachelor's+", "Tweet Count vs Education"),
-            ("POPDEN13_17",  "Persons per sq. mile",        "Tweet Count vs Population Density"),
-            ("PUNEMP13_17",  "Proportion unemployed",       "Tweet Count vs Unemployment"),
-        ]
-
-        fig, axes = plt.subplots(2, 2, figsize=(14, 11))
-        for ax, (col, xlabel, title) in zip(axes.flatten(), scatter_vars):
-            x = scatter_df[col]
-            y = scatter_df["tweet_count"]
-            ax.scatter(x, y, alpha=0.35, s=10, color="#06402B")
-            m, b = np.polyfit(x, y, 1)
-            x_line = np.linspace(x.min(), x.max(), 200)
-            ax.plot(x_line, m * x_line + b, color="crimson", linewidth=1.5)
-            ax.set_xlabel(xlabel)
-            ax.set_ylabel("Tweet count")
-            ax.set_title(title)
-
-        plt.suptitle(f"Tweet Count vs Census Variables — {args.city}", fontsize=15)
-        plt.tight_layout(rect=[0, 0, 1, 0.96])
-        plt.savefig(figures_dir / f"{args.city}-Tweet_Scatter.png", dpi=300, bbox_inches="tight")
+        save_figure(figures_dir / f"{args.city}-Tweet_Count.png", dpi=300, bbox_inches="tight")
         plt.close()
 
         # - Temporal Breakdowns -
 
-        ts = joined["timestamp"].dropna()
+        ts = to_local(joined["timestamp"].dropna(), local_tz)
         month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
         day_labels = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -556,7 +533,7 @@ if __name__ == "__main__":
             ax.set_ylabel("Tweet Count")
             ax.set_title(f"{title} — {args.city}")
             plt.tight_layout()
-            plt.savefig(figures_dir / f"{args.city}-{name}.png", dpi=300, bbox_inches="tight")
+            save_figure(figures_dir / f"{args.city}-{name}.png", dpi=300, bbox_inches="tight")
             plt.close()
 
         # ---- Sentiment Analysis ----
@@ -591,7 +568,7 @@ if __name__ == "__main__":
         city_bounds.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
         ax.set_title(f"Mean Tweet Sentiment — {args.city}", fontsize=14)
         ax.axis("off")
-        plt.savefig(figures_dir / f"{args.city}-Sentiment_Map.png", dpi=300, bbox_inches="tight")
+        save_figure(figures_dir / f"{args.city}-Sentiment_Map.png", dpi=300, bbox_inches="tight")
         plt.close()
 
         # Merge with income — filter low-sample tracts
@@ -621,7 +598,7 @@ if __name__ == "__main__":
         ax.set_title(f"Tweet Sentiment vs Tract Income — {args.city}")
         ax.legend()
         plt.tight_layout()
-        plt.savefig(figures_dir / f"{args.city}-Sentiment_vs_Income.png", dpi=300, bbox_inches="tight")
+        save_figure(figures_dir / f"{args.city}-Sentiment_vs_Income.png", dpi=300, bbox_inches="tight")
         plt.close()
 
         # - Residual Plot -
@@ -641,7 +618,7 @@ if __name__ == "__main__":
         ax.set_ylabel("Residual Sentiment")
         ax.set_title(f"Residual Sentiment vs Income — {args.city}")
         plt.tight_layout()
-        plt.savefig(figures_dir / f"{args.city}-Sentiment_Residual.png", dpi=300, bbox_inches="tight")
+        save_figure(figures_dir / f"{args.city}-Sentiment_Residual.png", dpi=300, bbox_inches="tight")
         plt.close()
 
         # - Sentiment by Income Quintile Boxplot -
@@ -659,6 +636,156 @@ if __name__ == "__main__":
         ax.set_ylabel("Mean Sentiment")
         ax.set_title(f"Sentiment Distribution Across Income Groups — {args.city}")
         plt.tight_layout()
-        plt.savefig(figures_dir / f"{args.city}-Sentiment_Income_Boxplot.png", dpi=300, bbox_inches="tight")
+        save_figure(figures_dir / f"{args.city}-Sentiment_Income_Boxplot.png", dpi=300, bbox_inches="tight")
         plt.close()
 
+        # ---- Sentiment vs Temporal Factors ----
+
+        sent_temporal = joined[["timestamp", "sentiment"]].dropna().copy()
+        sent_temporal["timestamp"] = to_local(sent_temporal["timestamp"], local_tz)
+        sent_temporal["hour"] = sent_temporal["timestamp"].dt.hour
+        sent_temporal["dayofweek"] = sent_temporal["timestamp"].dt.dayofweek
+        sent_temporal["month"] = sent_temporal["timestamp"].dt.month
+        sent_temporal["date"] = sent_temporal["timestamp"].dt.date
+
+        # - Mean Sentiment by Hour of Day -
+
+        hourly = sent_temporal.groupby("hour")["sentiment"].agg(["mean", "sem"]).reindex(range(24))
+
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.bar(range(24), hourly["mean"], color="#06402B", alpha=0.8)
+        ax.errorbar(range(24), hourly["mean"], yerr=hourly["sem"] * 1.96,
+                    fmt="none", color="black", linewidth=0.8, capsize=3)
+        ax.set_xlabel("Hour of Day")
+        ax.set_ylabel("Mean Sentiment Score")
+        ax.set_title(f"Mean Tweet Sentiment by Hour of Day — {args.city}")
+        ax.set_xticks(range(24))
+        ax.set_ylim(0, 1)
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Hour.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Mean Sentiment by Day of Week -
+
+        dow_sent = sent_temporal.groupby("dayofweek")["sentiment"].agg(["mean", "sem"]).reindex(range(7))
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.bar(day_labels, dow_sent["mean"], color="#06402B", alpha=0.8)
+        ax.errorbar(range(7), dow_sent["mean"], yerr=dow_sent["sem"] * 1.96,
+                    fmt="none", color="black", linewidth=0.8, capsize=3)
+        ax.set_xlabel("Day of Week")
+        ax.set_ylabel("Mean Sentiment Score")
+        ax.set_title(f"Mean Tweet Sentiment by Day of Week — {args.city}")
+        ax.set_ylim(0, 1)
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Day.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Mean Sentiment by Month -
+
+        monthly_sent = sent_temporal.groupby("month")["sentiment"].agg(["mean", "sem"]).reindex(range(1, 13))
+
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.bar(month_labels, monthly_sent["mean"], color="#06402B", alpha=0.8)
+        ax.errorbar(range(12), monthly_sent["mean"], yerr=monthly_sent["sem"] * 1.96,
+                    fmt="none", color="black", linewidth=0.8, capsize=3)
+        ax.set_xlabel("Month")
+        ax.set_ylabel("Mean Sentiment Score")
+        ax.set_title(f"Mean Tweet Sentiment by Month — {args.city}")
+        ax.set_ylim(0, 1)
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Month.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Daily Sentiment Time Series -
+
+        daily_ts = sent_temporal.groupby("date")["sentiment"].mean().sort_index()
+        daily_ts.index = pd.to_datetime(daily_ts.index)
+        rolling_avg = daily_ts.rolling(7, center=True, min_periods=1).mean()
+
+        fig, ax = plt.subplots(figsize=(14, 5))
+        ax.plot(daily_ts.index, daily_ts.values, alpha=0.25, color="#06402B", linewidth=0.7, label="Daily mean")
+        ax.plot(rolling_avg.index, rolling_avg.values, color="#06402B", linewidth=2, label="7-day rolling mean")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("Mean Sentiment Score")
+        ax.set_title(f"Daily Tweet Sentiment Over Time — {args.city}")
+        ax.set_ylim(0, 1)
+        ax.legend()
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Timeseries.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # - Sentiment Heatmap: Hour x Day of Week -
+
+        pivot = sent_temporal.groupby(["dayofweek", "hour"])["sentiment"].mean().unstack(fill_value=np.nan)
+
+        fig, ax = plt.subplots(figsize=(14, 5))
+        im = ax.imshow(pivot.values, cmap="RdYlGn", aspect="auto", vmin=0, vmax=1)
+        ax.set_xticks(range(24))
+        ax.set_xticklabels(range(24))
+        ax.set_yticks(range(7))
+        ax.set_yticklabels(day_labels)
+        ax.set_xlabel("Hour of Day")
+        ax.set_title(f"Mean Sentiment Heatmap (Hour × Day of Week) — {args.city}")
+        plt.colorbar(im, ax=ax, label="Mean Sentiment Score")
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Heatmap.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # ---- Extreme Sentiment vs Temporal Factors ----
+
+        POS_THRESHOLD = 0.65
+        NEG_THRESHOLD = 0.35
+
+        sent_temporal["positive"] = sent_temporal["sentiment"] > POS_THRESHOLD
+        sent_temporal["negative"] = sent_temporal["sentiment"] < NEG_THRESHOLD
+
+        temporal_extremes = [
+            ("hour",      range(24),    None,         "Hour of Day", "Extreme Sentiment by Hour of Day", "Sentiment_Extremes_Hour",  12),
+            ("dayofweek", range(7),     day_labels,   "Day of Week", "Extreme Sentiment by Day of Week", "Sentiment_Extremes_Day",   10),
+            ("month",     range(1, 13), month_labels, "Month",       "Extreme Sentiment by Month",       "Sentiment_Extremes_Month", 12),
+        ]
+
+        for col, idx, labels, xlabel, title, fname, width in temporal_extremes:
+            grp = sent_temporal.groupby(col)[["positive", "negative"]].mean().reindex(idx) * 100
+            x = np.arange(len(list(idx)))
+            bar_w = 0.35
+            x_ticks = labels if labels else list(idx)
+
+            fig, ax = plt.subplots(figsize=(width, 5))
+            ax.bar(x - bar_w / 2, grp["positive"], bar_w, label=f"Positive (>{POS_THRESHOLD})", color="#2ecc71")
+            ax.bar(x + bar_w / 2, grp["negative"], bar_w, label=f"Negative (<{NEG_THRESHOLD})", color="#e74c3c")
+            ax.set_xticks(x)
+            ax.set_xticklabels(x_ticks)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("% of Tweets")
+            ax.set_title(f"{title} — {args.city}")
+            ax.legend()
+            plt.tight_layout()
+            save_figure(figures_dir / f"{args.city}-{fname}.png", dpi=300, bbox_inches="tight")
+            plt.close()
+
+        # - Extreme Sentiment Time Series -
+
+        daily_pos = sent_temporal.groupby("date")["positive"].mean().sort_index() * 100
+        daily_neg = sent_temporal.groupby("date")["negative"].mean().sort_index() * 100
+        daily_pos.index = pd.to_datetime(daily_pos.index)
+        daily_neg.index = pd.to_datetime(daily_neg.index)
+
+        roll_pos = daily_pos.rolling(7, center=True, min_periods=1).mean()
+        roll_neg = daily_neg.rolling(7, center=True, min_periods=1).mean()
+
+        fig, ax = plt.subplots(figsize=(14, 5))
+        ax.plot(daily_pos.index, daily_pos.values, alpha=0.2, color="#2ecc71", linewidth=0.7)
+        ax.plot(daily_neg.index, daily_neg.values, alpha=0.2, color="#e74c3c", linewidth=0.7)
+        ax.plot(roll_pos.index, roll_pos.values, color="#2ecc71", linewidth=2, label=f"% Positive (>{POS_THRESHOLD})")
+        ax.plot(roll_neg.index, roll_neg.values, color="#e74c3c", linewidth=2, label=f"% Negative (<{NEG_THRESHOLD})")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("% of Tweets")
+        ax.set_title(f"Extreme Tweet Sentiment Over Time — {args.city}")
+        ax.legend()
+        plt.tight_layout()
+        save_figure(figures_dir / f"{args.city}-Sentiment_Extremes_Timeseries.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # THEN - Other Census Data
