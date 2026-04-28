@@ -8,11 +8,11 @@ Five scripts run in sequence to go from raw tweet archives to the final figures 
 Extract.py → Stats.py → ByCity.py → Sentiment.py → Generate.py
 ```
 
-The analysis used in the report used this pipeline to investigate: New York, Los Angeles, Chicago, Houston, and San Antonio. The 2017 shapefiles needed for these are included within the `Utilities/` folder, for any other states download them here: `https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html`
+The analysis used in the report used this pipeline to investigate: New York, Los Angeles, Chicago, Houston, and San Antonio. The 2017 shapefiles needed for these are included within the `Utilities/` folder, for any other states download them here: <https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html>
 
-The census data and documentation can be found here: `https://www.icpsr.umich.edu/sites/nanda/view/studies/38528/datasets/2`
+The census data and documentation can be found here: <https://www.icpsr.umich.edu/sites/nanda/view/studies/38528/datasets/2>
 
-The shapefile used to identify U.S cities in the filtering stage can be found here: `https://catalog.data.gov/dataset/500-cities-city-boundaries`
+The shapefile used to identify U.S cities in the filtering stage can be found here: <https://catalog.data.gov/dataset/500-cities-city-boundaries>
 
 ---
 
