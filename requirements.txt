@@ -1,0 +1,11 @@
+geopandas
+ijson
+matplotlib
+numpy
+pandas
+seaborn
+shapely
+timezonefinder
+torch
+tqdm
+transformers

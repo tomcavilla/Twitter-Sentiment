@@ -1,8 +1,112 @@
-# Generate.py — Output Reference
+# Twitter Sentiment Pipeline
+
+> All data is stored in the parent directory (`../`) alongside this `Code/` folder: `2017_Original/`, `Extracted/`, `CityTweets/`, `Stats.json`, etc.
+
+Five scripts run in sequence to go from raw tweet archives to the final figures and HTML report.
+
+```
+Extract.py → Stats.py → ByCity.py → Sentiment.py → Generate.py
+```
+
+The analysis used in the report used this pipeline to investigate: New York, Los Angeles, Chicago, Houston, and San Antonio. The 2017 shapefiles needed for these are included within the `Utilities/` folder, for any other states download them here: `https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html`
+
+The census data and documentation can be found here: `https://www.icpsr.umich.edu/sites/nanda/view/studies/38528/datasets/2`
+
+The shapefile used to identify U.S cities in the filtering stage can be found here: `https://catalog.data.gov/dataset/500-cities-city-boundaries`
+
+---
+
+## Extract.py
+
+Reads raw `.json.gz` tweet archives from `../2017_Original/`, filters to US-only tweets, computes a centroid from each tweet's bounding box, and writes slim records to `../Extracted/{month}/`.
+
+```
+python Extract.py
+```
+
+No arguments — edit the `directory` variable at the top of the script to change the source path.
+
+**Output**
+
+| Path | Description |
+|---|---|
+| `../Extracted/{month}/*.json.gz` | Filtered tweets grouped by month, one file per source archive |
+| `../Extraction_Stats.txt` | File count, total tweets processed, tweets kept/discarded, and percentage kept |
+
+Each output record contains: `id`, `lang`, `text`, `timestamp`, `user`, `country`, `bounding_box`, `centroid` (`[lat, lon]`).
+
+Uses all available CPU cores via `multiprocessing.Pool`.
+
+---
+
+## Stats.py
+
+Reads all `../Extracted/{month}/` files, performs a spatial join against `CityBoundaries.shp` to assign each tweet to a city, and aggregates counts. Saves the result to `../Stats.json` (consumed by `Generate.py` for the general stats figures).
+
+```
+python Stats.py
+```
+
+No arguments. Must be run from the `Code/` directory.
+
+**Output**
+
+| Path | Description |
+|---|---|
+| `../Stats.json` | Total tweet count, per-city counts, unique user count, and all three metrics broken down by month |
+
+Uses all available CPU cores via `ProcessPoolExecutor`.
+
+---
+
+## ByCity.py
+
+Filters the extracted tweet corpus to a single city and writes one `.jsonl` file per day to `../CityTweets/{city}/`. This per-city folder is the input for both `Sentiment.py` and `Generate.py`.
+
+```
+python ByCity.py --city "Chosen City"
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `--city` | Yes | City name — must match an entry in `CityBoundaries.shp` |
+
+**Output**
+
+| Path | Description |
+|---|---|
+| `../CityTweets/{city}/{YYYY-MM-DD}.jsonl` | One tweet per line for tweets whose centroid falls within the city polygon |
+
+Applies a fast bounding-box pre-filter followed by a precise polygon containment check. Uses all available CPU cores via `ProcessPoolExecutor`.
+
+---
+
+## Sentiment.py
+
+Scores every tweet in `../CityTweets/` with the [BERTweet](https://huggingface.co/finiteautomata/bertweet-base-sentiment-analysis) sentiment model and writes the score back into each `.jsonl` file in-place.
+
+```
+python Sentiment.py
+```
+
+No arguments. Processes all cities found under `../CityTweets/`.
+
+**Model details**
+
+| Setting | Value |
+|---|---|
+| Model | `finiteautomata/bertweet-base-sentiment-analysis` |
+| Batch size | 256 |
+| Max token length | 64 |
+| Device | CUDA if available, otherwise CPU; uses FP16 on GPU |
+
+The `sentiment_score` field is added to each record using the formula `(P(positive) − P(negative) + 1) / 2`, producing a value in `[0, 1]` where 1 is maximally positive. Files are written to a `.tmp` sibling and then atomically replaced.
+
+---
+
+## Generate.py — Output Reference
 
 Generates census demographic maps, tweet statistics, and sentiment analysis figures for a given US city.
-
-## Usage
 
 ```
 python Generate.py --city "Chosen City" --tracts "path/to/state_tracts.shp" [--out "path/to/output"]
@@ -12,7 +116,7 @@ python Generate.py --city "Chosen City" --tracts "path/to/state_tracts.shp" [--o
 |---|---|---|
 | `--city` | Yes | City name — must match an entry in `CityBoundaries.shp` |
 | `--tracts` | Yes | Path to the state-level census tract shapefile |
-| `--out` | No | Output directory (defaults to `Code/Out/`) |
+| `--out` | No | Output directory (defaults to `Out/`) |
 
 ## Output Structure
 

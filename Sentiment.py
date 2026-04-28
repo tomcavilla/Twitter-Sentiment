@@ -8,12 +8,14 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+# BERTweet fine-tuned on sentiment — outputs NEG / NEU / POS
 MODEL_NAME = "finiteautomata/bertweet-base-sentiment-analysis"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=True)
 model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 model.to(device)
 model.eval()
 
+# fp16 for faster GPU inference
 if device == "cuda":
     model = model.half()
 
@@ -36,6 +38,7 @@ def score_batch(tweets):
         negative = probs[:, 0]
         positive = probs[:, 2]
 
+        # scale to [0, 1] where 0.5 is neutral
         score = (positive - negative + 1) / 2
         return score.cpu().numpy()
     
@@ -58,6 +61,7 @@ for city in sorted(os.listdir(base)):
         batch_tweets = []
         batch_lines = []
 
+        # write to temp file then replace so we don't corrupt on crash
         with open(input_file, "r", encoding="utf-8") as f_in, \
              open(temp_file, "w", encoding="utf-8") as f_out:
 
@@ -74,6 +78,7 @@ for city in sorted(os.listdir(base)):
                         f_out.write(json.dumps(obj) + "\n")
                     batch_tweets, batch_lines = [], []
 
+            # flush remainder
             if batch_tweets:
                 scores = score_batch(batch_tweets)
                 for obj, s in zip(batch_lines, scores):
