@@ -1,8 +1,8 @@
-
 import argparse
 import geopandas as gpd
 import json
 import matplotlib as mpl
+mpl.use('Agg')
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from matplotlib.colors import LinearSegmentedColormap
 from pathlib import Path
 from timezonefinder import TimezoneFinder
+from scipy import stats
 
 
 CITIES_SHAPEFILE = "Utilities/Shapefiles/CityBoundaries.shp"
@@ -683,16 +684,35 @@ if __name__ == "__main__":
     all_tracts = gpd.read_file(args.tracts)
     all_tracts['GEOID'] = all_tracts['GEOID'].astype(str).str.zfill(11)
 
+    # Load the city boundary once and dissolve it into a single unified polygon.
+    # dissolve() matters for cities made up of multiple parts (e.g. NYC's five
+    # boroughs each being a separate row) — without it, clipping against the
+    # unmerged rows can leave seams or drop slivers at the internal borders.
+    city_bounds = gpd.read_file(CITIES_SHAPEFILE)
+    city_bounds = city_bounds[city_bounds["NAME"] == args.city].to_crs(all_tracts.crs)
+    city_boundary = city_bounds.dissolve()
+
+    # city_gdf (built by city_tracts() above) goes through its own CRS
+    # round-trip and ends up in a different CRS to all_tracts/city_bounds
+    # (e.g. EPSG:4326 vs EPSG:4269). Keep boundary copies reprojected to
+    # match it, for clipping/overlaying the tweet- and sentiment-based maps
+    # further down, which are all built from city_gdf rather than all_tracts.
+    city_bounds_geo = city_bounds.to_crs(city_gdf.crs)
+    city_boundary_geo = city_boundary.to_crs(city_gdf.crs)
+
     gdf = all_tracts.merge(census_income[['TRACT_FIPS10', 'INCOME_SCORE']],
                            left_on='GEOID', right_on='TRACT_FIPS10')
+    gdf = gpd.clip(gdf, city_boundary)
 
+    fig, ax = plt.subplots(figsize=(10, 12))
     gdf.plot(
         column='INCOME_SCORE',
         cmap='RdYlGn',
         legend=True,
         legend_kwds={'label': 'Weighted Income Score ($k)'},
-        figsize=(10, 12)
+        ax=ax
     )
+    city_bounds.boundary.plot(ax=ax, color='black', linewidth=0.5)
     plt.title(f'Wealth Distribution across {args.city} Census Tracts')
     plt.axis('off')
     save_figure(figures_dir / f"{args.city}-Wealth_Distribution.png", dpi=300)
@@ -708,9 +728,7 @@ if __name__ == "__main__":
     census_age = census_age.dropna(subset=age_cols)
 
     age_gdf = all_tracts.merge(census_age, left_on='GEOID', right_on='TRACT_FIPS10', how='inner')
-    
-    city_bounds = gpd.read_file(CITIES_SHAPEFILE)
-    city_bounds = city_bounds[city_bounds["NAME"] == args.city].to_crs(age_gdf.crs)
+    age_gdf = gpd.clip(age_gdf, city_boundary)
 
     blues = LinearSegmentedColormap.from_list('blues_clipped', plt.colormaps['Blues'](np.linspace(0.35, 1.0, 256)))
 
@@ -798,6 +816,7 @@ if __name__ == "__main__":
     census_density = census_density.dropna(subset=[density_col])
 
     density_gdf = all_tracts.merge(census_density, left_on='GEOID', right_on='TRACT_FIPS10', how='inner')
+    density_gdf = gpd.clip(density_gdf, city_boundary)
 
     vmin = density_gdf[density_col].quantile(0.05)
     vmax = density_gdf[density_col].quantile(0.95)
@@ -822,6 +841,7 @@ if __name__ == "__main__":
     census_edu = census_edu.dropna(subset=edu_cols)
 
     edu_gdf = all_tracts.merge(census_edu, left_on='GEOID', right_on='TRACT_FIPS10', how='inner')
+    edu_gdf = gpd.clip(edu_gdf, city_boundary)
 
     all_edu_values = edu_gdf[edu_cols].stack().dropna()
     edu_vmin = all_edu_values.quantile(0.05)
@@ -905,6 +925,7 @@ if __name__ == "__main__":
     census_unemp = census_unemp.dropna(subset=[unemp_col])
 
     unemp_gdf = all_tracts.merge(census_unemp, left_on='GEOID', right_on='TRACT_FIPS10', how='inner')
+    unemp_gdf = gpd.clip(unemp_gdf, city_boundary)
 
     vmin = unemp_gdf[unemp_col].quantile(0.05)
     vmax = unemp_gdf[unemp_col].quantile(0.95)
@@ -928,6 +949,7 @@ if __name__ == "__main__":
     census_owned = census_owned.dropna(subset=[owned_col])
 
     owned_gdf = all_tracts.merge(census_owned, left_on='GEOID', right_on='TRACT_FIPS10', how='inner')
+    owned_gdf = gpd.clip(owned_gdf, city_boundary)
 
     vmin = owned_gdf[owned_col].quantile(0.05)
     vmax = owned_gdf[owned_col].quantile(0.95)
@@ -955,6 +977,7 @@ if __name__ == "__main__":
     census_scores = census_scores.dropna(subset=score_cols)
 
     scores_gdf = all_tracts.merge(census_scores, left_on='GEOID', right_on='TRACT_FIPS10', how='inner')
+    scores_gdf = gpd.clip(scores_gdf, city_boundary)
 
     fig, axes = plt.subplots(1, 2, figsize=(18, 10))
 
@@ -984,6 +1007,7 @@ if __name__ == "__main__":
     census_ethnicity = census_ethnicity.dropna(subset=ethnicity_cols)
 
     ethnicity_gdf = all_tracts.merge(census_ethnicity, left_on='GEOID', right_on='TRACT_FIPS10', how='inner')
+    ethnicity_gdf = gpd.clip(ethnicity_gdf, city_boundary)
 
     oranges_clipped = LinearSegmentedColormap.from_list(
         'oranges_eth', plt.colormaps['Oranges'](np.linspace(0.2, 1.0, 256))
@@ -1111,7 +1135,7 @@ if __name__ == "__main__":
                             if centroid is None:
                                 continue
                             lat, lon = centroid
-                            rows.append((lon, lat, tweet.get("timestamp"), tweet.get("sentiment_score")))
+                            rows.append((lon, lat, tweet.get("timestamp"), tweet.get("sentiment_score"), tweet.get("user")))
                         except json.JSONDecodeError:
                             continue
                 return rows
@@ -1122,7 +1146,7 @@ if __name__ == "__main__":
                 for future in as_completed(futures):
                     all_rows.extend(future.result())
 
-            tweets_df = pd.DataFrame(all_rows, columns=["lon", "lat", "timestamp", "sentiment"])
+            tweets_df = pd.DataFrame(all_rows, columns=["lon", "lat", "timestamp", "sentiment", "user"])
             tweets_df["timestamp"] = pd.to_datetime(tweets_df["timestamp"], errors="coerce")
             tweets_df.to_pickle(pickle_path)
 
@@ -1134,12 +1158,42 @@ if __name__ == "__main__":
         )
         joined = gpd.sjoin(tweets_gdf, city_gdf[["GEOID", "geometry"]], predicate="within")
 
+        user_sentiment = (
+            joined
+            .dropna(subset=["sentiment", "user"])
+            .groupby(["GEOID", "user"], as_index=False)
+            .agg(
+                mean_sentiment=("sentiment", "mean")
+            )
+        )
+
+        tract_user_sentiment = (
+            user_sentiment
+            .groupby("GEOID", as_index=False)
+            .agg(
+                mean_sentiment=("mean_sentiment", "mean"),
+                total_users=("user", "nunique")
+            )
+        )
+
+        sentiment_income_users = (
+            tract_user_sentiment
+            .merge(
+                gdf[["GEOID", "INCOME_SCORE"]],
+                on="GEOID",
+                how="inner"
+            )
+            .query("total_users >= 10")
+            .dropna()
+        )
+        
         # - Tweet Count Choropleth -
 
         counts = joined.groupby("index_right").size()
         tweet_count_gdf = city_gdf.copy()
         tweet_count_gdf["tweet_count"] = 0
         tweet_count_gdf.loc[counts.index, "tweet_count"] = counts.values
+        tweet_count_gdf = gpd.clip(tweet_count_gdf, city_boundary_geo)
 
         vmin = tweet_count_gdf["tweet_count"].quantile(0.05)
         vmax = tweet_count_gdf["tweet_count"].quantile(0.95)
@@ -1148,7 +1202,7 @@ if __name__ == "__main__":
         tweet_count_gdf.plot(column="tweet_count", cmap="viridis", legend=True, ax=ax,
                              vmin=vmin, vmax=vmax,
                              legend_kwds={"label": "Tweet count", "shrink": 0.6})
-        city_bounds.plot(ax=ax, facecolor="none", edgecolor="white", linewidth=1.5)
+        city_bounds_geo.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
         ax.set_title(f"Tweet Count per Census Tract — {args.city}", fontsize=14)
         ax.axis("off")
         save_figure(figures_dir / f"{args.city}-Tweet_Count.png", dpi=300, bbox_inches="tight")
@@ -1205,12 +1259,13 @@ if __name__ == "__main__":
         # - Mean Sentiment Choropleth -
 
         sentiment_map = city_gdf.merge(tract_sentiment, on="GEOID", how="left")
+        sentiment_map = gpd.clip(sentiment_map, city_boundary_geo)
 
         fig, ax = plt.subplots(figsize=(10, 12))
         sentiment_map.plot(column="mean_sentiment", cmap="RdYlGn", legend=True, ax=ax,
                            vmin=0, vmax=1,
                            legend_kwds={"label": "Mean Sentiment Score", "shrink": 0.6})
-        city_bounds.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
+        city_bounds_geo.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
         ax.set_title(f"Mean Tweet Sentiment — {args.city}", fontsize=14)
         ax.axis("off")
         save_figure(figures_dir / f"{args.city}-Sentiment_Map.png", dpi=300, bbox_inches="tight")
@@ -1227,6 +1282,7 @@ if __name__ == "__main__":
         )
 
         variance_map = city_gdf.merge(tract_variance, on="GEOID", how="left")
+        variance_map = gpd.clip(variance_map, city_boundary_geo)
         vmin = variance_map["sentiment_std"].quantile(0.05)
         vmax = variance_map["sentiment_std"].quantile(0.95)
 
@@ -1234,7 +1290,7 @@ if __name__ == "__main__":
         variance_map.plot(column="sentiment_std", cmap="magma", legend=True, ax=ax,
                           vmin=vmin, vmax=vmax,
                           legend_kwds={"label": "Sentiment Std. Dev.", "shrink": 0.6})
-        city_bounds.plot(ax=ax, facecolor="none", edgecolor="white", linewidth=1.5)
+        city_bounds_geo.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
         ax.set_title(f"Tweet Sentiment Variance — {args.city}", fontsize=14)
         ax.axis("off")
         save_figure(figures_dir / f"{args.city}-Sentiment_Variance.png", dpi=300, bbox_inches="tight")
@@ -1268,6 +1324,67 @@ if __name__ == "__main__":
         ax.legend()
         plt.tight_layout()
         save_figure(figures_dir / f"{args.city}-Sentiment_vs_Income.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        #- User Aggregated Sentiment vs Income Scatter
+
+        z = np.polyfit(
+            sentiment_income_users["INCOME_SCORE"],
+            sentiment_income_users["mean_sentiment"],
+            1
+        )
+
+        x_line = np.linspace(
+            sentiment_income_users["INCOME_SCORE"].min(),
+            sentiment_income_users["INCOME_SCORE"].max(),
+            200
+        )
+
+        # Calculate Pearson r and p-value
+        r_val, p_val = stats.pearsonr(
+            sentiment_income_users["INCOME_SCORE"],
+            sentiment_income_users["mean_sentiment"]
+        )
+        r_squared = r_val ** 2
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        scatter = ax.scatter(
+            sentiment_income_users["INCOME_SCORE"],
+            sentiment_income_users["mean_sentiment"],
+            s=50,
+            alpha=0.5,
+            c=sentiment_income_users["total_users"],
+            cmap="plasma",
+            norm=mpl.colors.LogNorm(),
+            edgecolors="grey",
+            linewidths=0.3
+        )
+
+        ax.plot(
+            x_line,
+            np.polyval(z, x_line),
+            "k--",
+            linewidth=1.2
+        )
+
+        plt.colorbar(scatter, ax=ax, label="Unique Users")
+
+        ax.set_xlabel("Estimated Mean Income ($k)")
+        ax.set_ylabel("Mean User Sentiment")
+        ax.set_title(
+            f"User-Aggregated Sentiment vs Tract Income — {args.city}\n"
+            f"r = {r_val:.3f}, R² = {r_squared:.3f} (p = {p_val:.2e})"
+        )
+
+        plt.tight_layout()
+
+        save_figure(
+            figures_dir / f"{args.city}-Sentiment_vs_Income_Users.png",
+            dpi=300,
+            bbox_inches="tight"
+        )
+
         plt.close()
 
         # - Residual Plot -
@@ -1503,13 +1620,14 @@ if __name__ == "__main__":
         # - Sentiment Trend Slope Choropleth -
 
         slope_map = city_gdf.merge(slopes, on="GEOID", how="left")
+        slope_map = gpd.clip(slope_map, city_boundary_geo)
         abs_max = slope_map["slope"].abs().quantile(0.95)
 
         fig, ax = plt.subplots(figsize=(10, 12))
         slope_map.plot(column="slope", cmap="coolwarm", legend=True, ax=ax,
                        vmin=-abs_max, vmax=abs_max,
                        legend_kwds={"label": "Sentiment slope (per day)", "shrink": 0.6})
-        city_bounds.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
+        city_bounds_geo.plot(ax=ax, facecolor="none", edgecolor="black", linewidth=1.5)
         ax.set_title(f"Sentiment Trend Slope across {args.city} Census Tracts", fontsize=14)
         ax.axis("off")
         save_figure(figures_dir / f"{args.city}-Sentiment_Slope_Map.png", dpi=300, bbox_inches="tight")
